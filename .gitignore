@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Benchmark data (raw AsyLex downloads and intermediate work files)
+data/raw/
+data/work/
