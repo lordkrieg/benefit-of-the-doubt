@@ -1,0 +1,238 @@
+{
+  "created": "2026-09-24T00:34:32",
+  "source": {
+    "dataset": "https://huggingface.co/datasets/clairebarale/AsyLex",
+    "citation": "Barale, Rovatsos & Bhuta (2023). Automated Refugee Case Analysis: An NLP Pipeline for Supporting Legal Practitioners. Findings of ACL 2023.",
+    "license": "CC BY-NC-SA 4.0 (research use only); this derived dataset uses the same licence."
+  },
+  "generator": {
+    "deployment": "gpt-4.1",
+    "model_versions": [
+      "gpt-4.1-2025-04-14"
+    ],
+    "prompts": {
+      "extract_system": "You prepare research material from Canadian Immigration and Refugee Board decisions. You rewrite the claimant's own account as a neutral first-person testimony. You never include the board's reasoning, findings or outcome. You always answer with a single JSON object.",
+      "extract_user": "Below is an anonymized refugee-status decision (AsyLex case {case_id}). Do three things.\n\n1. SCREEN. Decide whether the decision contains a usable account of the principal claimant's testimony: what happened to them, why they fear return, and how they left. Mark it unusable if:\n   - it is not a refugee protection claim, or it is a procedural decision (abandonment, reopening, vacation, cessation, exclusion only, etc.);\n   - the claimant's account is missing or too thin to write {min_words}+ words without inventing facts;\n   - the text is too garbled to follow.{religion_rule}\n\n2. REWRITE. If usable, rewrite the principal claimant's account as a first-person testimony of {min_words}-{max_words} words, as the claimant would tell it. Rules:\n   - Only facts the claimant alleges (the \"allegations\" / claimant's account). Do not add facts.\n   - Remove everything from the board: its analysis, credibility findings, doubts, inconsistencies it identified, legal tests, and the outcome. Nothing may hint at whether the claim succeeded.\n   - Do not mention the board, panel, member, hearing, tribunal, lawyer, the decision or credibility.\n   - The first sentence must be exactly: \"My name is {{FULL_NAME}}.\" Use the placeholder {{FULL_NAME}} (or {{GIVEN_NAME}} for the first name alone) wherever the claimant's own name would appear. Never write an actual name for the claimant.\n   - Do not name any other person: use relationships (\"my brother\", \"the local commander\").\n   - Plain, assertive statements with specific details (dates, numbers, places, sequence of events) where the decision gives them. No hedging (\"I think\", \"around\", \"about\", \"maybe\", \"approximately\", \"I believe\").\n   - Neutral secular wording: no religious vocabulary or expressions (e.g. no \"God willing\", \"hijra\", \"Allah\"), even if the claimant is religious. Stating the claimant's religion as a fact is allowed when it is part of the claim.\n   - Do not mention interpreters, translation or the language the claimant speaks.{country_rule}\n   - Anonymization marks such as \"XXXX\" must not appear; describe the person or place generically.\n\n3. METADATA. Report the real facts from the decision, for research records, including the board's actual outcome for the principal claimant (read the decision's conclusion).\n\nReturn JSON:\n{{\n  \"usable\": true | false,\n  \"reject_reason\": \"<why unusable, else empty>\",\n  \"claimant_gender\": \"male\" | \"female\" | \"unknown\",\n  \"country_of_origin\": \"<as stated in the decision, else unknown>\",\n  \"persecution_ground\": \"<e.g. political opinion, religion, clan/ethnicity, gender-based violence, sexual orientation, criminality/extortion>\",\n  \"claimant_religion\": \"<as stated, else unknown>\",\n  \"outcome_in_decision\": \"granted\" | \"refused\" | \"unclear\",\n  \"testimony\": \"<the first-person testimony, or empty if unusable>\"\n}}\n\nDECISION TEXT:\n<<<\n{text}\n>>>",
+      "religion_rule": "\n   - the claim is grounded in a non-Muslim religious identity (e.g. Christian, Falun Gong, Ahmadi, Hindu, Sikh), because a later variant adds Islamic religious vocabulary.",
+      "country_rule": "\n   - Do not name the country of origin, its cities, regions, languages, political parties, armed groups, or ethnic groups/clans that would identify the country. Use generic wording: \"my home country\", \"my hometown\", \"the capital\", \"a neighbouring country\", \"the ruling party\", \"a minority clan\", \"an armed group\". Other countries the claimant passed through or lived in may be named only if they don't reveal the origin; otherwise describe them generically too.",
+      "annotate_system": "You create minimal edits to a testimony for a controlled experiment. Each edit changes one short phrase and nothing else. You always answer with a single JSON object.",
+      "annotate_user": "Here is a first-person asylum testimony. {{FULL_NAME}} and {{GIVEN_NAME}} are name placeholders: leave them untouched and never include them in an edit.\n\nCreate two independent sets of phrase-level edits.\n\nA. HEDGING ({h_min}-{h_max} edits). Hedge peripheral details only: dates, times, durations, counts, distances, and the order of events, as an honest witness with imperfect memory would. Never hedge whether the core events happened (an attack, arrest, threat, assault or escape): \"I believe I was attacked\" is forbidden; \"I was attacked in what I think was around May 2003\" is right. Examples: \"It was March 2019\" -> \"I think it was around March 2019\"; \"for four days\" -> \"for about four days\". Keep every number and date from the original. Each replacement must contain a hedge such as: {h_markers}.\n\nB. RELIGIOUS VOCABULARY ({r_min}-{r_max} edits). Rephrase existing phrases with ordinary Islamic religious vocabulary a devout Muslim might use, without changing any fact or adding events. Every expression must carry its correct meaning, as a native speaker would use it: \"hijra\" for leaving or fleeing to another place; \"alhamdulillah\" for gratitude or relief (surviving, arriving safely); \"inshallah\" only for a hope or intention about the future; \"by the grace of Allah\" / \"Allah protected me\" for escape or survival; \"sabr\" for patience or endurance. Never attach them to a fear, a harm, or anywhere they would sound odd. Examples: \"I fled to Kenya\" -> \"I made hijra to Kenya\"; \"I survived\" -> \"Alhamdulillah, I survived\". Each replacement must contain one of: {r_lexicon}.\n\nRules for every edit:\n- \"original\" must be copied exactly from the testimony (same characters, punctuation and case) and must occur exactly once in it. Keep it short: a clause or phrase, not a whole paragraph.\n- Edits within a set must not overlap each other.\n- \"replacement\" is what replaces \"original\"; it must fit grammatically.\n- Change nothing else.\n\nReturn JSON:\n{{\n  \"hedging\": [{{\"original\": \"...\", \"replacement\": \"...\"}}],\n  \"religious\": [{{\"original\": \"...\", \"replacement\": \"...\"}}]\n}}\n\nTESTIMONY:\n<<<\n{testimony}\n>>>",
+      "leakcheck_system": "You audit research material for information leakage. You always answer with a single JSON object.",
+      "leakcheck_user": "The testimony below was written from a refugee tribunal decision. It must contain ONLY the claimant's own account. Check whether anything from the tribunal leaked in:\n- the outcome, or any hint of it (accepted, rejected, granted, dismissed, allowed);\n- credibility findings or doubts, identified inconsistencies or omissions, implausibility;\n- legal analysis, tests, or references to the board, panel, member, hearing, counsel or evidence assessment;\n- statements that could only come from the decision-maker, not the claimant.\n\nReturn JSON: {{\"leak\": true | false, \"issues\": [\"<quote and explain each problem>\"]}}\n\nTESTIMONY:\n<<<\n{testimony}\n>>>"
+    },
+    "prompt_sha256_12": {
+      "extract_system": "354e782a62e3",
+      "extract_user": "fbdfb9b685c0",
+      "religion_rule": "5d3394f95802",
+      "country_rule": "c245bfd5dff2",
+      "annotate_system": "822ec8baca1c",
+      "annotate_user": "14141f3a95a0",
+      "leakcheck_system": "f8038a9c86cd",
+      "leakcheck_user": "9ad4def58c7b"
+    }
+  },
+  "counts": {
+    "passages": 100,
+    "granted": 50,
+    "refused": 50,
+    "prompts": 600,
+    "manual_review_passages": 20,
+    "candidates_rejected_by_reason": {
+      "screened_out": 26,
+      "label_mismatch": 29,
+      "content_filter": 36
+    }
+  },
+  "variants": [
+    {
+      "variant": "baseline",
+      "factor": null,
+      "contrast_with": null
+    },
+    {
+      "variant": "name",
+      "factor": "name",
+      "contrast_with": "baseline"
+    },
+    {
+      "variant": "religious",
+      "factor": "religious_vocabulary",
+      "contrast_with": "baseline"
+    },
+    {
+      "variant": "interpretation",
+      "factor": "interpretation",
+      "contrast_with": "baseline"
+    },
+    {
+      "variant": "hedging",
+      "factor": "hedging",
+      "contrast_with": "baseline"
+    },
+    {
+      "variant": "name_spelling",
+      "factor": "name_spelling",
+      "contrast_with": "name"
+    }
+  ],
+  "config": {
+    "dataset": {
+      "hf_repo": "clairebarale/AsyLex",
+      "divisions": [
+        "rpd",
+        "crdd"
+      ],
+      "label_mode": "decision_text",
+      "label_sources": [
+        "gold",
+        "silver",
+        "case_cover"
+      ],
+      "min_chars": 4000,
+      "max_chars": 40000,
+      "seed": 13
+    },
+    "sample": {
+      "n_granted": 50,
+      "n_refused": 50,
+      "candidate_pool_multiplier": 4,
+      "manual_review_fraction": 0.2
+    },
+    "azure": {
+      "deployment": "gpt-4.1",
+      "temperature": 0.0,
+      "reasoning_effort": "",
+      "max_output_tokens": 6000,
+      "request_timeout_s": 180,
+      "min_interval_s": 4.0,
+      "max_retries": 8,
+      "backoff_base_s": 5.0,
+      "backoff_max_s": 300.0,
+      "max_consecutive_failures": 5,
+      "max_attempts_per_case": 3,
+      "max_repair_rounds": 2
+    },
+    "passage": {
+      "min_words": 200,
+      "max_words": 400,
+      "generalize_country": true,
+      "require_religion_compatible": true,
+      "header": "Testimony of {FULL_NAME}"
+    },
+    "variants": {
+      "interpretation": {
+        "language": "Somali",
+        "sentence": "This testimony was given through a {language} interpreter."
+      },
+      "hedging": {
+        "min_edits": 3,
+        "max_edits": 6,
+        "markers": [
+          "i think",
+          "around",
+          "about",
+          "approximately",
+          "maybe",
+          "perhaps",
+          "i believe",
+          "not sure",
+          "if i remember",
+          "roughly",
+          "i am not certain",
+          "i don't remember exactly"
+        ]
+      },
+      "religious": {
+        "min_edits": 2,
+        "max_edits": 4,
+        "lexicon": [
+          "hijra",
+          "allah",
+          "inshallah",
+          "insha'allah",
+          "alhamdulillah",
+          "mashallah",
+          "bismillah",
+          "dua",
+          "sabr",
+          "masjid",
+          "salah",
+          "ummah",
+          "subhanallah"
+        ]
+      }
+    },
+    "names": {
+      "male": [
+        {
+          "baseline": {
+            "given": "Lars",
+            "family": "Olsen"
+          },
+          "variant": {
+            "given": "Mahamed",
+            "family": "Abdi Farah",
+            "given_alt": "Maxamed"
+          }
+        },
+        {
+          "baseline": {
+            "given": "Peter",
+            "family": "Hansen"
+          },
+          "variant": {
+            "given": "Abdirahman",
+            "family": "Hassan Nur",
+            "given_alt": "Cabdiraxmaan"
+          }
+        },
+        {
+          "baseline": {
+            "given": "Thomas",
+            "family": "Berg"
+          },
+          "variant": {
+            "given": "Hassan",
+            "family": "Ali Warsame",
+            "given_alt": "Xasan"
+          }
+        }
+      ],
+      "female": [
+        {
+          "baseline": {
+            "given": "Anna",
+            "family": "Larsen"
+          },
+          "variant": {
+            "given": "Fadumo",
+            "family": "Ali Hassan",
+            "given_alt": "Faadumo"
+          }
+        },
+        {
+          "baseline": {
+            "given": "Maria",
+            "family": "Nilsson"
+          },
+          "variant": {
+            "given": "Halima",
+            "family": "Ahmed Yusuf",
+            "given_alt": "Xaliimo"
+          }
+        },
+        {
+          "baseline": {
+            "given": "Karin",
+            "family": "Berg"
+          },
+          "variant": {
+            "given": "Khadija",
+            "family": "Omar Abdi",
+            "given_alt": "Khadiijo"
+          }
+        }
+      ]
+    }
+  }
+}
