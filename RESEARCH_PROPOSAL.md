@@ -47,12 +47,12 @@ That gives roughly 100 passages × 6 versions (the baseline plus five variants) 
 
 ## Model
 
-**Primary: Qwen3-4B** (instruction-tuned).
+**Primary: Qwen3.5-4B** (instruction-tuned).
 
 - Strong reasoning for its size and among the most-downloaded small open-weight models, so its behavior is a reasonable stand-in for current frontier models.
 - It runs in fp16 on a free Colab T4.
 
-**Comparison (if time allows): Gemma 3 4B-it**, a model from a different developer with a different multilingual training emphasis.
+**Comparison: Gemma 4 E2B**, a model from a different developer with a different multilingual training emphasis.
 
 ## Method
 
