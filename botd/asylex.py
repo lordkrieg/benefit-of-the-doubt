@@ -24,14 +24,14 @@ DIVISIONS = [
 ]
 
 
-def download(repo: str, raw_dir: Path, token: str | None, log=print) -> dict[str, Path]:
-    """Fetch the AsyLex files we need, resuming partial downloads."""
+def download(repo: str, revision: str, raw_dir: Path, token: str | None, log=print) -> dict[str, Path]:
+    """Fetch the AsyLex files we need at a pinned dataset revision, resuming partial downloads."""
     raw_dir.mkdir(parents=True, exist_ok=True)
     paths = {}
     for key, remote in FILES.items():
         dest = raw_dir / Path(remote).name
         paths[key] = dest
-        url = f"https://huggingface.co/datasets/{repo}/resolve/main/{remote}"
+        url = f"https://huggingface.co/datasets/{repo}/resolve/{revision}/{remote}"
         headers = {"Authorization": f"Bearer {token}"} if token else {}
         req = urllib.request.Request(url, method="HEAD", headers=headers)
         with urllib.request.urlopen(req, timeout=60) as r:

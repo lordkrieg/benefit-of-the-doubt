@@ -73,12 +73,14 @@ name placeholders: leave them untouched and never include them in an edit.
 Create two independent sets of phrase-level edits.
 
 A. HEDGING ({h_min}-{h_max} edits). Hedge peripheral details only: dates, times, durations, \
-counts, distances, and the order of events, as an honest witness with imperfect memory would. \
-Never hedge whether the core events happened (an attack, arrest, threat, assault or escape): \
-"I believe I was attacked" is forbidden; "I was attacked in what I think was around May 2003" \
-is right. Examples: "It was March 2019" -> "I think it was around March 2019"; "for four days" \
--> "for about four days". Keep every number and date from the original. Each replacement must \
-contain a hedge such as: {h_markers}.
+counts and distances, as an honest witness with imperfect memory would. Pick phrases that \
+contain such a detail, and put the hedge immediately before the detail it qualifies. Never \
+hedge whether something happened or whether someone acted: "I think I left in 2010", "I was \
+hit by a car, if I remember correctly" and "if I remember correctly, I was arrested" are \
+forbidden. Right: "It was March 2019" -> "I think it was around March 2019"; "for four days" \
+-> "for about four days"; "I left in 2010" -> "I left in what I think was 2010". Keep every \
+number and date from the original, and add at most {h_added} words per edit. Each replacement \
+must contain a hedge such as: {h_markers}.
 
 B. RELIGIOUS VOCABULARY ({r_min}-{r_max} edits). Rephrase existing phrases with ordinary \
 Islamic religious vocabulary a devout Muslim might use, without changing any fact or adding \
@@ -86,9 +88,10 @@ events. Every expression must carry its correct meaning, as a native speaker wou
 "hijra" for leaving or fleeing to another place; "alhamdulillah" for gratitude or relief \
 (surviving, arriving safely); "inshallah" only for a hope or intention about the future; \
 "by the grace of Allah" / "Allah protected me" for escape or survival; "sabr" for patience or \
-endurance. Never attach them to a fear, a harm, or anywhere they would sound odd. \
-Examples: "I fled to Kenya" -> "I made hijra to Kenya"; "I survived" -> "Alhamdulillah, \
-I survived". Each replacement must contain one of: {r_lexicon}.
+endurance. Never attach them to a fear, a harm, or anywhere they would sound odd. Reword \
+only: do not add actions (such as praying), feelings or events, and add at most {r_added} \
+words per edit. Examples: "I fled to Kenya" -> "I made hijra to Kenya"; "I survived" -> \
+"Alhamdulillah, I survived". Each replacement must contain one of: {r_lexicon}.
 
 Rules for every edit:
 - "original" must be copied exactly from the testimony (same characters, punctuation and case) \

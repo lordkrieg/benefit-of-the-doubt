@@ -91,6 +91,7 @@ class AzureLLM:
         # Dropped on the fly if the deployment rejects them.
         self.temperature = az.get("temperature")
         self.reasoning_effort = az.get("reasoning_effort") or None
+        self.seed = az.get("seed")
         self.json_mode = True
         self._lock = threading.Lock()
         self._last_start = 0.0
@@ -112,6 +113,8 @@ class AzureLLM:
             kw["temperature"] = self.temperature
         if self.reasoning_effort:
             kw["reasoning_effort"] = self.reasoning_effort
+        if self.seed is not None:
+            kw["seed"] = self.seed
         if self.json_mode:
             kw["response_format"] = {"type": "json_object"}
         return kw
@@ -122,6 +125,10 @@ class AzureLLM:
         if "temperature" in msg and self.temperature is not None:
             self.log(f"  deployment rejects temperature={self.temperature}; omitting it")
             self.temperature = None
+            return True
+        if "seed" in msg and self.seed is not None:
+            self.log("  deployment rejects seed; omitting it")
+            self.seed = None
             return True
         if "reasoning_effort" in msg and self.reasoning_effort:
             self.log("  deployment rejects reasoning_effort; omitting it")
@@ -168,7 +175,13 @@ class AzureLLM:
                 if choice.finish_reason == "length":
                     raise BadOutput("output truncated (raise azure.max_output_tokens)")
                 usage = resp.usage.model_dump() if resp.usage else {}
-                return content, {"model_version": resp.model, "usage": usage}
+                return content, {
+                    "model_version": resp.model,
+                    "system_fingerprint": getattr(resp, "system_fingerprint", None),
+                    "seed": self.seed,
+                    "temperature": self.temperature,
+                    "usage": usage,
+                }
 
             attempt += 1
             if attempt > self.az["max_retries"]:
@@ -187,7 +200,8 @@ class AzureLLM:
         for round_ in range(self.az["max_repair_rounds"] + 1):
             content, m = self.complete(messages)
             meta["calls"] += 1
-            meta["model_version"] = m["model_version"]
+            for k in ("model_version", "system_fingerprint", "seed", "temperature"):
+                meta[k] = m.get(k)
             for k, v in m["usage"].items():
                 if isinstance(v, int):
                     meta["usage"][k] = meta["usage"].get(k, 0) + v

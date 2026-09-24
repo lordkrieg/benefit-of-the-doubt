@@ -17,8 +17,13 @@ ERROR = "error"
 
 
 class StageLog:
-    def __init__(self, path: Path):
+    """Records for one stage. Only records written under the current stage `version` count;
+    older ones stay in the file (append-only) but are ignored, so changing a prompt,
+    validator or setting reruns exactly the stages it affects."""
+
+    def __init__(self, path: Path, version: str):
         self.path = path
+        self.version = version
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.records: dict[str, list[dict]] = {}
         if path.exists():
@@ -28,10 +33,17 @@ class StageLog:
                         rec = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    self.records.setdefault(rec["case_id"], []).append(rec)
+                    if rec.get("version") == version:
+                        self.records.setdefault(rec["case_id"], []).append(rec)
 
     def append(self, case_id: str, status: str, **fields) -> dict:
-        rec = {"case_id": case_id, "status": status, "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), **fields}
+        rec = {
+            "case_id": case_id,
+            "status": status,
+            "version": self.version,
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            **fields,
+        }
         with open(self.path, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
             f.flush()

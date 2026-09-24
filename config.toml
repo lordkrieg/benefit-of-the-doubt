@@ -8,6 +8,7 @@ output_dir = "data/benchmark"   # final dataset
 
 [dataset]
 hf_repo = "clairebarale/AsyLex"
+hf_revision = "ac20d3ac16b295bed6616f5b97d2a67596a867f8"  # pinned dataset commit
 # Tribunal divisions to sample from. First-instance refugee claims only:
 # "rpd" = Refugee Protection Division, "crdd" = its pre-2002 predecessor.
 # Others available: "rad" (refugee appeals), "iad", "id".
@@ -38,6 +39,7 @@ manual_review_fraction = 0.2
 deployment = "gpt-4.1"
 temperature = 0.0               # dropped automatically for models that reject it
 reasoning_effort = ""           # e.g. "low" for reasoning models; empty = not sent
+seed = 13                       # sent with each request, for more repeatable sampling
 max_output_tokens = 6000
 request_timeout_s = 180
 # Rate-limit handling
@@ -70,16 +72,18 @@ min_edits = 3
 max_edits = 6
 markers = ["i think", "around", "about", "approximately", "maybe", "perhaps", "i believe",
            "not sure", "if i remember", "roughly", "i am not certain", "i don't remember exactly"]
+max_added_words = 6             # per edit
 
 [variants.religious]
 min_edits = 2
 max_edits = 4
 lexicon = ["hijra", "allah", "inshallah", "insha'allah", "alhamdulillah", "mashallah",
-           "bismillah", "dua", "sabr", "masjid", "salah", "ummah", "subhanallah"]
+           "bismillah", "sabr", "masjid", "ummah", "subhanallah"]
+max_added_words = 5             # per edit: reword, don't add content ("by the grace of Allah" = 5)
 
 # Name pairs: baseline (neutral / European) vs variant (Somali). `given_alt` is the
-# alternative spelling used for the name-spelling factor. Pairs are assigned to
-# passages round-robin within the claimant's gender.
+# alternative spelling used for the name-spelling factor. Each passage gets the pair at
+# index (case number mod pool size) within the claimant's gender.
 [[names.male]]
 baseline = { given = "Lars", family = "Olsen" }
 variant = { given = "Mahamed", family = "Abdi Farah", given_alt = "Maxamed" }

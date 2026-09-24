@@ -12,15 +12,18 @@ under work_dir, so an interrupted or rate-limited run resumes where it stopped.
 
 import argparse
 import csv
+import hashlib
+import inspect
 import json
 import random
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
 
 from . import asylex, prompts, variants
-from .config import load_config, public_config
+from .config import ROOT, load_config, public_config
 from .llm import AzureLLM, BadOutput, ContentFiltered, FatalError, QuotaExhausted, TransientError
 from .store import ERROR, OK, REJECTED, StageLog, read_jsonl, write_jsonl
 
@@ -44,22 +47,82 @@ def clean(text: str) -> str:
     return re.sub(r"\n\s*\n+", "\n\n", text).strip()
 
 
+def _hash(*parts) -> str:
+    blob = json.dumps(parts, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(blob.encode()).hexdigest()[:12]
+
+
+def _src(*objs) -> list[str]:
+    return [inspect.getsource(o) for o in objs]
+
+
+def pool_version(cfg: dict) -> str:
+    """Everything that determines the candidate pool."""
+    return _hash("pool", cfg["dataset"], cfg["sample"], inspect.getsource(asylex))
+
+
+def stage_versions(cfg: dict) -> dict[str, str]:
+    """A version per LLM stage: its prompts, validators, settings, model, and upstream stage.
+
+    Records from any other version are ignored, so a change reruns exactly the stages it
+    affects. Operational settings (pacing, retries, timeouts, output-token cap) are excluded.
+    """
+    az = {k: cfg["azure"].get(k) for k in ("deployment", "temperature", "reasoning_effort")}
+    extract = _hash(
+        "extract", az, cfg["passage"], cfg["dataset"]["max_chars"],
+        [prompts.EXTRACT_SYSTEM, prompts.EXTRACT_USER, prompts.RELIGION_RULE, prompts.COUNTRY_RULE],
+        [variants.BASELINE_HEDGES.pattern, variants.LEAK_TERMS.pattern, variants.BASELINE_RELIGIOUS],
+        _src(variants.validate_extract, Pipeline.extract, clean),
+    )
+    annotate = _hash(
+        "annotate", extract, az, cfg["variants"], cfg["names"],
+        [prompts.ANNOTATE_SYSTEM, prompts.ANNOTATE_USER],
+        [variants.DETAIL.pattern, variants.HEDGED_ACTOR.pattern, variants.ADDED_ACTS.pattern],
+        _src(variants.validate_annotate, variants._check_hedge, variants._check_religious, variants._insertions,
+             variants._locate, variants.build_versions, variants.diff_check, Pipeline.annotate),
+    )
+    leakcheck = _hash(
+        "leakcheck", extract, az, cfg["names"],
+        [prompts.LEAKCHECK_SYSTEM, prompts.LEAKCHECK_USER],
+        _src(Pipeline.leakcheck),
+    )
+    return {"extract": extract, "annotate": annotate, "leakcheck": leakcheck}
+
+
 def ensure_candidates(cfg: dict, work: Path, log, rebuild: bool = False) -> list[dict]:
-    path = work / "candidates.jsonl"
-    if path.exists() and not rebuild:
-        return read_jsonl(path)
-    paths = asylex.download(cfg["dataset"]["hf_repo"], cfg["paths"]["raw_dir"], cfg["hf_token"], log)
+    path, meta_path = work / "candidates.jsonl", work / "candidates.meta.json"
+    version = pool_version(cfg)
+    if path.exists() and meta_path.exists() and not rebuild:
+        if json.loads(meta_path.read_text(encoding="utf-8")).get("version") == version:
+            return read_jsonl(path)
+        log("dataset/sample settings or sampling code changed; rebuilding the candidate pool")
+    ds = cfg["dataset"]
+    paths = asylex.download(ds["hf_repo"], ds["hf_revision"], cfg["paths"]["raw_dir"], cfg["hf_token"], log)
     log("scanning AsyLex decisions (takes a minute)...")
     cands = asylex.build_candidates(paths, cfg, log)
     write_jsonl(path, cands)
+    meta_path.write_text(json.dumps({"version": version, "n": len(cands)}), encoding="utf-8")
     log(f"wrote {len(cands)} candidates to {path}")
     return cands
+
+
+def git_state() -> dict:
+    """Commit of the generating code, and whether the code or config had uncommitted changes."""
+    def git(*args):
+        try:
+            return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, timeout=10).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return ""
+
+    tracked = ("botd", "config.toml", "pyproject.toml", "uv.lock")
+    return {"commit": git("rev-parse", "HEAD"), "dirty": bool(git("status", "--porcelain", "--", *tracked))}
 
 
 class Pipeline:
     def __init__(self, cfg: dict, llm, work: Path, log):
         self.cfg, self.llm, self.log = cfg, llm, log
-        self.logs = {s: StageLog(work / f"{s}.jsonl") for s in STAGES}
+        self.versions = stage_versions(cfg)
+        self.logs = {s: StageLog(work / f"{s}.jsonl", self.versions[s]) for s in STAGES}
         self.max_attempts = cfg["azure"]["max_attempts_per_case"]
 
     def _run(self, stage: str, cid: str, fn) -> dict | str:
@@ -121,6 +184,8 @@ class Pipeline:
             h_min=vc["hedging"]["min_edits"],
             h_max=vc["hedging"]["max_edits"],
             h_markers=", ".join(f'"{m}"' for m in vc["hedging"]["markers"]),
+            h_added=vc["hedging"]["max_added_words"],
+            r_added=vc["religious"]["max_added_words"],
             r_min=vc["religious"]["min_edits"],
             r_max=vc["religious"]["max_edits"],
             r_lexicon=", ".join(vc["religious"]["lexicon"]),
@@ -149,13 +214,19 @@ class Pipeline:
             return REJECTED, fields
         return OK, fields
 
+    def gate(self, ext: dict) -> str | None:
+        """Deterministic checks on an accepted extraction. Returns a rejection reason or None."""
+        if self.cfg["passage"]["generalize_country"] and variants.names_origin(ext["template"], ext["country_of_origin"]):
+            return "country_named"
+        return None
+
     def process(self, case: dict) -> str:
         """Returns "accepted", "rejected", "error" (retry later) or "failed" (attempts exhausted)."""
         cid = case["case_id"]
         ext = self._run("extract", cid, lambda: self.extract(case))
         if isinstance(ext, str):
             return ext
-        if ext["status"] == REJECTED:
+        if ext["status"] == REJECTED or self.gate(ext):
             return "rejected"
         for stage, fn in (("annotate", self.annotate), ("leakcheck", self.leakcheck)):
             rec = self._run(stage, cid, lambda fn=fn: fn(case, ext))
@@ -171,7 +242,7 @@ class Pipeline:
             rec = self.logs[stage].final(cid)
             if rec is None:
                 return "failed" if self.logs[stage].errors(cid) >= self.max_attempts else "pending"
-            if rec["status"] == REJECTED:
+            if rec["status"] == REJECTED or (stage == "extract" and self.gate(rec)):
                 return "rejected"
         return "accepted"
 
@@ -232,7 +303,7 @@ def assemble(pipe: Pipeline, cands: list[dict], cfg: dict, out: Path, log) -> No
     cases = sorted(chosen[1] + chosen[0], key=lambda c: (c["rank"], -c["outcome"]))
     log(f"assembling {len(chosen[1])} granted + {len(chosen[0])} refused passages")
 
-    passages, rows, model_versions = [], [], set()
+    passages, rows, model_versions, fingerprints = [], [], set(), set()
     for case in cases:
         cid = case["case_id"]
         ext, ann, leak = (pipe.logs[s].final(cid) for s in STAGES)
@@ -245,6 +316,7 @@ def assemble(pipe: Pipeline, cands: list[dict], cfg: dict, out: Path, log) -> No
             continue
         for rec in (ext, ann, leak):
             model_versions.add(rec["meta"].get("model_version"))
+            fingerprints.add(rec["meta"].get("system_fingerprint"))
         passages.append(
             {
                 "passage_id": f"asylex-{cid}",
@@ -303,8 +375,14 @@ def assemble(pipe: Pipeline, cands: list[dict], cfg: dict, out: Path, log) -> No
     for c in cands:
         for s in STAGES:
             rec = pipe.logs[s].final(c["case_id"])
+            reason = None
             if rec and rec["status"] == REJECTED:
-                rejections[rec.get("reason", "other")] = rejections.get(rec.get("reason", "other"), 0) + 1
+                reason = rec.get("reason", "other")
+            elif rec and s == "extract":
+                reason = pipe.gate(rec)
+            if reason:
+                rejections[reason] = rejections.get(reason, 0) + 1
+                break
     manifest = {
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "source": {
@@ -314,8 +392,13 @@ def assemble(pipe: Pipeline, cands: list[dict], cfg: dict, out: Path, log) -> No
             "license": "CC BY-NC-SA 4.0 (research use only); this derived dataset uses the same licence.",
         },
         "generator": {
+            "code": git_state(),
+            "asylex_revision": cfg["dataset"]["hf_revision"],
+            "candidate_pool_version": pool_version(cfg),
+            "stage_versions": pipe.versions,
             "deployment": cfg["azure"]["deployment"],
             "model_versions": sorted(v for v in model_versions if v),
+            "system_fingerprints": sorted(f for f in fingerprints if f),
             "prompts": prompts.ALL,
             "prompt_sha256_12": prompts.prompt_hashes(),
         },

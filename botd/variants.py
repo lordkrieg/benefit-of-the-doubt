@@ -26,6 +26,12 @@ VERSIONS = [
 BASELINE_HEDGES = re.compile(
     r"\b(i think|maybe|perhaps|approximately|i believe|not sure|if i remember|roughly|i am not certain)\b", re.I
 )
+# Religious vocabulary the baseline must not contain. Fixed here (not taken from the edit
+# lexicon in config) so that tuning the religious variant doesn't change extraction.
+BASELINE_RELIGIOUS = [
+    "hijra", "allah", "inshallah", "insha'allah", "alhamdulillah", "mashallah",
+    "bismillah", "dua", "sabr", "masjid", "salah", "ummah", "subhanallah",
+]
 LEAK_TERMS = re.compile(
     r"\b(panel|tribunal|the board|credib\w*|convention refugee|person in need of protection|RPD|IRB|"
     r"counsel|interpreter|translat\w*)\b",
@@ -62,11 +68,22 @@ def validate_extract(obj: dict, cfg: dict) -> list[str]:
         p.append('anonymization marks ("XXXX") remain; describe the person or place generically')
     if m := BASELINE_HEDGES.search(t):
         p.append(f'baseline must not hedge; remove "{m.group(0)}"')
-    if _has_any(t, cfg["variants"]["religious"]["lexicon"]):
+    if _has_any(t, BASELINE_RELIGIOUS):
         p.append("baseline must not use religious vocabulary")
     if m := LEAK_TERMS.search(t):
         p.append(f'remove tribunal/process wording: "{m.group(0)}"')
     return p
+
+
+def names_origin(template: str, country: str) -> str | None:
+    """The mention of the claimant's own country (or its demonym) in the testimony, if any."""
+    country = (country or "").split("(")[0].split(",")[0].strip()
+    if not country or country.lower() == "unknown":
+        return None
+    stems = sorted({country, re.sub(r"[aeoy]$", "", country)}, key=len, reverse=True)
+    pattern = rf"\b({'|'.join(re.escape(s) for s in stems)})(a|an|ian|ese|i|n)?\b"
+    m = re.search(pattern, template, re.I)
+    return m.group(0) if m else None
 
 
 def _locate(template: str, edits: list[dict]) -> tuple[list[tuple[int, int, str]], list[str]]:
@@ -103,6 +120,62 @@ def apply_edits(template: str, edits: list[dict]) -> str:
     return "".join(out + [template[pos:]])
 
 
+# Peripheral details a hedge may qualify: numbers, dates, counts, durations, times of day.
+DETAIL = re.compile(
+    r"\d|\b(january|february|march|april|may|june|july|august|september|october|november|december"
+    r"|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty"
+    r"|hundred|dozen|once|twice|several|few|first|second|third|last"
+    r"|morning|afternoon|evening|night|midnight|noon|days?|weeks?|months?|years?|hours?|minutes?"
+    r"|kilomet(er|re)s?|km|miles?|times)\b",
+    re.I,
+)
+# A hedge directly followed by the speaker (or another actor) doubts the event itself.
+HEDGED_ACTOR = re.compile(
+    r"\b(i think|i believe|maybe|perhaps|i am not certain|not sure|if i remember( correctly| right)?)\b,? "
+    r"(that )?(i|we|he|she|they)\b",
+    re.I,
+)
+ADDED_ACTS = re.compile(r"\b(pray\w*|worship\w*|fast(ed|ing)|recit\w*)\b", re.I)
+
+
+def _insertions(orig: str, rep: str) -> list[tuple[str, str]]:
+    """(inserted words, the words that follow them in the replacement) for each insertion."""
+    a, b = orig.split(), rep.split()
+    sm = difflib.SequenceMatcher(a=a, b=b, autojunk=False)
+    return [
+        (" ".join(b[j1:j2]), " ".join(b[j2:]))
+        for tag, _i1, _i2, j1, j2 in sm.get_opcodes()
+        if tag in ("insert", "replace")
+    ]
+
+
+def _check_hedge(orig: str, rep: str, markers: list[str]) -> list[str]:
+    p = []
+    missing = set(re.findall(r"\d+", orig)) - set(re.findall(r"\d+", rep))
+    if missing:
+        p.append(f"{rep!r} drops the numbers {sorted(missing)}")
+    if not DETAIL.search(orig):
+        p.append(f"{orig!r} has no date, number, count or duration to hedge; pick a detail")
+    marker_re = re.compile(
+        r"(?<!\w)(" + "|".join(re.escape(m) for m in sorted(markers, key=len, reverse=True)) + r")(?!\w)", re.I
+    )
+    for inserted, after in _insertions(orig, rep):
+        window = f"{inserted} {' '.join(after.split()[:3])}"
+        if HEDGED_ACTOR.search(window):
+            p.append(f"{rep!r} hedges whether someone acted; hedge only the detail (date, number, duration)")
+        for m in marker_re.finditer(inserted):
+            following = " ".join((inserted[m.end():] + " " + after).split()[:6])
+            if not DETAIL.search(following):
+                p.append(f"hedge {m.group(0)!r} in {rep!r} must come right before the detail it qualifies")
+    return p
+
+
+def _check_religious(orig: str, rep: str, lexicon: list[str]) -> list[str]:
+    if any(ADDED_ACTS.search(inserted) for inserted, _ in _insertions(orig, rep)):
+        return [f"{rep!r} adds an action (e.g. praying); only reword what is already there"]
+    return []
+
+
 def validate_annotate(obj: dict, template: str, cfg: dict, pair: dict) -> list[str]:
     p = []
     for key, vcfg, terms in (
@@ -117,14 +190,15 @@ def validate_annotate(obj: dict, template: str, cfg: dict, pair: dict) -> list[s
             p.append(f'"{key}" needs {vcfg["min_edits"]}-{vcfg["max_edits"]} edits, got {len(edits)}')
         p += [f"{key}: {x}" for x in _locate(template, edits)[1]]
         for e in edits:
-            if e.get("replacement") and not _has_any(e["replacement"], terms):
-                p.append(f"{key}: replacement {e['replacement']!r} lacks a required term ({', '.join(terms[:5])}, ...)")
-            if key == "hedging" and e.get("original") and e.get("replacement"):
-                missing = set(re.findall(r"\d+", e["original"])) - set(re.findall(r"\d+", e["replacement"]))
-                if missing:
-                    p.append(f"hedging: replacement {e['replacement']!r} drops the numbers {sorted(missing)}")
-                if re.search(r"\bi (believe|think) (that )?i (was|had been)\b", e["replacement"], re.I):
-                    p.append(f"hedging: {e['replacement']!r} hedges whether a core event happened; hedge a detail")
+            orig, rep = e.get("original") or "", e.get("replacement") or ""
+            if rep and not _has_any(rep, terms):
+                p.append(f"{key}: replacement {rep!r} lacks a required term ({', '.join(terms[:5])}, ...)")
+            if orig and rep:
+                added = len(rep.split()) - len(orig.split())
+                if added > vcfg["max_added_words"]:
+                    p.append(f"{key}: {rep!r} adds {added} words; at most {vcfg['max_added_words']} allowed")
+                check = _check_hedge if key == "hedging" else _check_religious
+                p += [f"{key}: {x}" for x in check(orig, rep, terms)]
     if not p:
         versions = build_versions(template, obj, pair, cfg)
         p += [f"diff check {k}: {v}" for k, v in diff_check(versions, template, obj, pair, cfg).items() if v != "ok"]
