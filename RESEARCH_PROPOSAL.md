@@ -47,12 +47,11 @@ That gives roughly 100 passages × 6 versions (the baseline plus five variants) 
 
 ## Model
 
-**Primary: Qwen3.5-4B** (instruction-tuned).
+**Primary: DeepSeek V4 Pro** (instruction-tuned).
 
-- Strong reasoning for its size and among the most-downloaded small open-weight models, so its behavior is a reasonable stand-in for current frontier models.
-- It runs in fp16 on a free Colab T4.
+- Strong reasoning and among the most-downloaded open-weight models, so its behavior is a reasonable stand-in for current frontier models.
 
-**Comparison: Gemma 4 E2B**, a model from a different developer with a different multilingual training emphasis.
+**Comparison: GPT-6 Luna**, a model from a different developer, good at high-volume data and preparatory work.
 
 ## Method
 
