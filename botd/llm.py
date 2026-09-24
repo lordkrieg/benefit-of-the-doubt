@@ -76,6 +76,17 @@ def parse_json(text: str) -> dict:
         raise BadOutput(f"invalid JSON: {e}") from e
 
 
+def _logprobs(choice, n_tokens: int = 3) -> list[dict] | None:
+    """The first few output tokens with their top alternatives, if logprobs were requested."""
+    content = choice.logprobs.content if choice.logprobs and choice.logprobs.content else None
+    if not content:
+        return None
+    return [
+        {"token": t.token, "logprob": t.logprob, "top": [[a.token, a.logprob] for a in t.top_logprobs or []]}
+        for t in content[:n_tokens]
+    ]
+
+
 class AzureLLM:
     def __init__(self, az: dict, log=print):
         if not az["deployment"]:
@@ -92,7 +103,7 @@ class AzureLLM:
         self.temperature = az.get("temperature")
         self.reasoning_effort = az.get("reasoning_effort") or None
         self.seed = az.get("seed")
-        self.json_mode = True
+        self.json_mode = az.get("json_mode", True)
         self._lock = threading.Lock()
         self._last_start = 0.0
 
@@ -107,7 +118,7 @@ class AzureLLM:
         base = self.az["backoff_base_s"] * (2**attempt)
         return min(self.az["backoff_max_s"], base) * random.uniform(0.7, 1.3)
 
-    def _kwargs(self, messages):
+    def _kwargs(self, messages, extra):
         kw = {"model": self.model, "messages": messages, "max_completion_tokens": self.az["max_output_tokens"]}
         if self.temperature is not None:
             kw["temperature"] = self.temperature
@@ -117,6 +128,7 @@ class AzureLLM:
             kw["seed"] = self.seed
         if self.json_mode:
             kw["response_format"] = {"type": "json_object"}
+        kw.update(extra)
         return kw
 
     def _drop_unsupported(self, msg: str) -> bool:
@@ -140,13 +152,18 @@ class AzureLLM:
             return True
         return False
 
-    def complete(self, messages: list[dict]) -> tuple[str, dict]:
-        """Return (content, meta). Raises one of the LLMError subclasses."""
+    def complete(self, messages: list[dict], allow_truncation: bool = False, **extra) -> tuple[str, dict]:
+        """Return (content, meta). Raises one of the LLMError subclasses.
+
+        `extra` is passed through to the API (e.g. logprobs, top_logprobs, max_completion_tokens).
+        With `allow_truncation`, output cut off at the token limit is returned instead of raising
+        (for answers read from the first token's logprobs).
+        """
         attempt = 0
         while True:
             self._pace()
             try:
-                resp = self.client.chat.completions.create(**self._kwargs(messages))
+                resp = self.client.chat.completions.create(**self._kwargs(messages, extra))
             except openai.RateLimitError as e:
                 wait = _retry_after(e)
                 if wait is not None and wait > self.az["backoff_max_s"]:
@@ -172,7 +189,7 @@ class AzureLLM:
                 if choice.finish_reason == "content_filter":
                     raise ContentFiltered("completion blocked by content filter")
                 content = choice.message.content or ""
-                if choice.finish_reason == "length":
+                if choice.finish_reason == "length" and not allow_truncation:
                     raise BadOutput("output truncated (raise azure.max_output_tokens)")
                 usage = resp.usage.model_dump() if resp.usage else {}
                 return content, {
@@ -181,6 +198,8 @@ class AzureLLM:
                     "seed": self.seed,
                     "temperature": self.temperature,
                     "usage": usage,
+                    "finish_reason": choice.finish_reason,
+                    "logprobs": _logprobs(choice),
                 }
 
             attempt += 1

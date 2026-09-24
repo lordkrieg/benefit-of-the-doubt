@@ -220,3 +220,7 @@ __marimo__/
 # Benchmark data (raw AsyLex downloads and intermediate work files)
 data/raw/
 data/work/
+# Evaluation dry runs and logs (real responses and analysis in data/results/ are kept)
+data/results/mock/
+data/results/run.log
+data/benchmark/mock/

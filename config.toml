@@ -1,10 +1,12 @@
-# Research settings for the benchmark generator (botd.generate).
+# Research settings for the benchmark generator (botd.generate) and the evaluation
+# (botd.evaluate, botd.analyze).
 # Secrets (API keys, endpoints) live in .env, not here.
 
 [paths]
 raw_dir = "data/raw"            # AsyLex downloads (gitignored)
 work_dir = "data/work"          # resumable per-stage JSONL logs (gitignored)
 output_dir = "data/benchmark"   # final dataset
+results_dir = "data/results"    # evaluation responses, analysis and figures
 
 [dataset]
 hf_repo = "clairebarale/AsyLex"
@@ -35,7 +37,7 @@ manual_review_fraction = 0.2
 
 [azure]
 # Name of the chat-model deployment in Azure AI Foundry. Can be overridden with
-# the AZURE_DEPLOYMENT env var. Must be a different model family from the evaluated model (Qwen).
+# the AZURE_DEPLOYMENT env var. Should be a different model family from the evaluated models.
 deployment = "gpt-4.1"
 temperature = 0.0               # dropped automatically for models that reject it
 reasoning_effort = ""           # e.g. "low" for reasoning models; empty = not sent
@@ -107,3 +109,35 @@ variant = { given = "Halima", family = "Ahmed Yusuf", given_alt = "Xaliimo" }
 [[names.female]]
 baseline = { given = "Karin", family = "Berg" }
 variant = { given = "Khadija", family = "Omar Abdi", given_alt = "Khadiijo" }
+
+# ---------------------------------------------------------------------------------------
+# Evaluation (botd.evaluate). Models use the same Azure endpoint and key as generation, and
+# the retry / backoff settings from [azure]. Each model runs in its own thread with its own
+# pool of `concurrency` in-flight requests; Azure quotas are per deployment, so models don't
+# compete for rate limit.
+[evaluate]
+answer_max_tokens = 5           # answers are read from the first token's logprobs
+explain_max_tokens = 400        # free-text stated-principle explanations
+min_answer_mass = 0.5           # probability on valid answer tokens needed to score a response
+
+[[evaluate.models]]
+name = "deepseek-v4-pro"        # label used in results
+deployment = "DeepSeek-V4-Pro"
+temperature = 0.0
+top_logprobs = 20               # covers all seven digits
+concurrency = 8                 # quota: 500 requests / 500k tokens per minute
+min_interval_s = 0.15           # <= 400 request starts per minute
+
+[[evaluate.models]]
+name = "gpt-6-luna"
+deployment = "gpt-6-luna"
+# Reasoning model: logprobs are only returned with reasoning off, temperature is fixed at 1
+# (so not sent), and top_logprobs is capped at 5.
+reasoning_effort = "none"
+top_logprobs = 5
+concurrency = 8
+min_interval_s = 0.15
+
+[analysis]
+bootstrap_samples = 10000
+seed = 13

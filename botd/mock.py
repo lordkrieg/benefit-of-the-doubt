@@ -5,6 +5,7 @@ simulates screen-outs, content-filter blocks, transient failures and leaks.
 """
 
 import hashlib
+import math
 import re
 
 from .llm import BadOutput, ContentFiltered, TransientError
@@ -82,3 +83,49 @@ class MockLLM:
         if problems:
             raise BadOutput("; ".join(problems))
         return obj, {"calls": 1, "usage": {}, "repairs": [], "model_version": "mock-1"}
+
+
+class MockEvalLLM:
+    """Offline stand-in for an evaluated model (evaluate --mock).
+
+    Returns first-token logprobs like the real API, truncated to the model's top_logprobs, with
+    known built-in effects (hedging, interpreter and spelling lower credibility) so the analysis
+    can be checked for recovering them.
+    """
+
+    EFFECTS = [(r"\b(I think|around|about|maybe|approximately|I believe)\b", -0.5), (r"interpreter", -0.3),
+               (r"\b(hijra|Allah|Alhamdulillah|inshallah)\b", -0.15), (r"Maxamed|Cabdiraxmaan|Xasan|Faadumo|Xaliimo|Khadiijo", -0.3)]
+
+    def __init__(self, m: dict):
+        self.k = m["top_logprobs"]
+
+    @staticmethod
+    def _logprobs(probs: dict[str, float], k: int) -> list[dict]:
+        top = sorted(((t, math.log(p)) for t, p in probs.items() if p > 0), key=lambda x: -x[1])[:k]
+        return [{"token": top[0][0], "logprob": top[0][1], "top": [list(x) for x in top]}]
+
+    def complete(self, messages, allow_truncation=False, **extra):
+        user = messages[-1]["content"]
+        if _h(user) % 400 == 0:
+            raise ContentFiltered("mock content filter")
+        meta = {"model_version": "mock-eval-1", "system_fingerprint": None, "usage": {"total_tokens": 1}}
+        if "TESTIMONY" in user:
+            body = user.split("<<<", 1)[1].split(">>>", 1)[0]
+            # Base credibility varies by passage but (almost) not by variant: variant edits rarely add "my".
+            mean = 3.0 + (len(re.findall(r"\bmy\b", body, re.I)) % 30) / 10
+            mean += sum(eff for pat, eff in self.EFFECTS if re.search(pat, body.split("\n", 1)[1]))
+            if "GRANT or REFUSE" in user:
+                p = 1 / (1 + math.exp(-2.0 * (mean - 4.5)))
+                probs = {"GR": p * 0.97, "REF": (1 - p) * 0.97, "Based": 0.03}
+            else:
+                w = {str(d): math.exp(-((d - mean) ** 2) / (2 * 0.8**2)) for d in range(1, 8)}
+                z = sum(w.values()) / 0.98
+                probs = {t: v / z for t, v in w.items()} | {"The": 0.02}
+        elif "LESS" in user:
+            less = 0.35 if "hedg" in user else 0.08
+            probs = {"LESS": less, "SAME": 0.9 - less, "MORE": 0.1}
+        else:
+            return "No. Such details say nothing about whether the account is true.", meta | {
+                "finish_reason": "stop", "logprobs": None}
+        lp = self._logprobs(probs, self.k)
+        return lp[0]["token"], meta | {"finish_reason": "length", "logprobs": lp}

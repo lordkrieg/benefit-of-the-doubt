@@ -19,6 +19,7 @@ import random
 import re
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -34,12 +35,14 @@ class Logger:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
         self.f = open(path, "a", encoding="utf-8")
+        self._lock = threading.Lock()  # shared by the evaluation's per-model threads
 
     def __call__(self, msg: str):
         line = f"[{time.strftime('%H:%M:%S')}] {msg}"
-        print(line, flush=True)
-        self.f.write(line + "\n")
-        self.f.flush()
+        with self._lock:
+            print(line, flush=True)
+            self.f.write(line + "\n")
+            self.f.flush()
 
 
 def clean(text: str) -> str:

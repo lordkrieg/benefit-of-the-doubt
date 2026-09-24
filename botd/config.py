@@ -14,7 +14,7 @@ def load_config(path: str | Path = ROOT / "config.toml") -> dict:
     with open(path, "rb") as f:
         cfg = tomllib.load(f)
 
-    for key in ("raw_dir", "work_dir", "output_dir"):
+    for key in ("raw_dir", "work_dir", "output_dir", "results_dir"):
         p = Path(cfg["paths"][key])
         cfg["paths"][key] = p if p.is_absolute() else ROOT / p
 
