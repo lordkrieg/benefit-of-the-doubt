@@ -1,14 +1,31 @@
 {
-  "created": "2026-09-24T00:34:32",
+  "created": "2026-09-24T22:16:58",
   "source": {
     "dataset": "https://huggingface.co/datasets/clairebarale/AsyLex",
     "citation": "Barale, Rovatsos & Bhuta (2023). Automated Refugee Case Analysis: An NLP Pipeline for Supporting Legal Practitioners. Findings of ACL 2023.",
     "license": "CC BY-NC-SA 4.0 (research use only); this derived dataset uses the same licence."
   },
   "generator": {
+    "code": {
+      "commit": "b5d5ab070206f16c232e281617776f71aaadaad2",
+      "dirty": false
+    },
+    "asylex_revision": "ac20d3ac16b295bed6616f5b97d2a67596a867f8",
+    "candidate_pool_version": "f9419d168046",
+    "stage_versions": {
+      "extract": "0abea5358098",
+      "annotate": "8ebf20771a24",
+      "leakcheck": "227daa2566ed"
+    },
     "deployment": "gpt-4.1",
     "model_versions": [
       "gpt-4.1-2025-04-14"
+    ],
+    "system_fingerprints": [
+      "fp_3cba29e44e",
+      "fp_6ab89a131e",
+      "fp_861cf8a3da",
+      "fp_894cf3c534"
     ],
     "prompts": {
       "extract_system": "You prepare research material from Canadian Immigration and Refugee Board decisions. You rewrite the claimant's own account as a neutral first-person testimony. You never include the board's reasoning, findings or outcome. You always answer with a single JSON object.",
@@ -16,7 +33,7 @@
       "religion_rule": "\n   - the claim is grounded in a non-Muslim religious identity (e.g. Christian, Falun Gong, Ahmadi, Hindu, Sikh), because a later variant adds Islamic religious vocabulary.",
       "country_rule": "\n   - Do not name the country of origin, its cities, regions, languages, political parties, armed groups, or ethnic groups/clans that would identify the country. Use generic wording: \"my home country\", \"my hometown\", \"the capital\", \"a neighbouring country\", \"the ruling party\", \"a minority clan\", \"an armed group\". Other countries the claimant passed through or lived in may be named only if they don't reveal the origin; otherwise describe them generically too.",
       "annotate_system": "You create minimal edits to a testimony for a controlled experiment. Each edit changes one short phrase and nothing else. You always answer with a single JSON object.",
-      "annotate_user": "Here is a first-person asylum testimony. {{FULL_NAME}} and {{GIVEN_NAME}} are name placeholders: leave them untouched and never include them in an edit.\n\nCreate two independent sets of phrase-level edits.\n\nA. HEDGING ({h_min}-{h_max} edits). Hedge peripheral details only: dates, times, durations, counts, distances, and the order of events, as an honest witness with imperfect memory would. Never hedge whether the core events happened (an attack, arrest, threat, assault or escape): \"I believe I was attacked\" is forbidden; \"I was attacked in what I think was around May 2003\" is right. Examples: \"It was March 2019\" -> \"I think it was around March 2019\"; \"for four days\" -> \"for about four days\". Keep every number and date from the original. Each replacement must contain a hedge such as: {h_markers}.\n\nB. RELIGIOUS VOCABULARY ({r_min}-{r_max} edits). Rephrase existing phrases with ordinary Islamic religious vocabulary a devout Muslim might use, without changing any fact or adding events. Every expression must carry its correct meaning, as a native speaker would use it: \"hijra\" for leaving or fleeing to another place; \"alhamdulillah\" for gratitude or relief (surviving, arriving safely); \"inshallah\" only for a hope or intention about the future; \"by the grace of Allah\" / \"Allah protected me\" for escape or survival; \"sabr\" for patience or endurance. Never attach them to a fear, a harm, or anywhere they would sound odd. Examples: \"I fled to Kenya\" -> \"I made hijra to Kenya\"; \"I survived\" -> \"Alhamdulillah, I survived\". Each replacement must contain one of: {r_lexicon}.\n\nRules for every edit:\n- \"original\" must be copied exactly from the testimony (same characters, punctuation and case) and must occur exactly once in it. Keep it short: a clause or phrase, not a whole paragraph.\n- Edits within a set must not overlap each other.\n- \"replacement\" is what replaces \"original\"; it must fit grammatically.\n- Change nothing else.\n\nReturn JSON:\n{{\n  \"hedging\": [{{\"original\": \"...\", \"replacement\": \"...\"}}],\n  \"religious\": [{{\"original\": \"...\", \"replacement\": \"...\"}}]\n}}\n\nTESTIMONY:\n<<<\n{testimony}\n>>>",
+      "annotate_user": "Here is a first-person asylum testimony. {{FULL_NAME}} and {{GIVEN_NAME}} are name placeholders: leave them untouched and never include them in an edit.\n\nCreate two independent sets of phrase-level edits.\n\nA. HEDGING ({h_min}-{h_max} edits). Hedge peripheral details only: dates, times, durations, counts and distances, as an honest witness with imperfect memory would. Pick phrases that contain such a detail, and put the hedge immediately before the detail it qualifies. Never hedge whether something happened or whether someone acted: \"I think I left in 2010\", \"I was hit by a car, if I remember correctly\" and \"if I remember correctly, I was arrested\" are forbidden. Right: \"It was March 2019\" -> \"I think it was around March 2019\"; \"for four days\" -> \"for about four days\"; \"I left in 2010\" -> \"I left in what I think was 2010\". Keep every number and date from the original, and add at most {h_added} words per edit. Each replacement must contain a hedge such as: {h_markers}.\n\nB. RELIGIOUS VOCABULARY ({r_min}-{r_max} edits). Rephrase existing phrases with ordinary Islamic religious vocabulary a devout Muslim might use, without changing any fact or adding events. Every expression must carry its correct meaning, as a native speaker would use it: \"hijra\" for leaving or fleeing to another place; \"alhamdulillah\" for gratitude or relief (surviving, arriving safely); \"inshallah\" only for a hope or intention about the future; \"by the grace of Allah\" / \"Allah protected me\" for escape or survival; \"sabr\" for patience or endurance. Never attach them to a fear, a harm, or anywhere they would sound odd. Reword only: do not add actions (such as praying), feelings or events, and add at most {r_added} words per edit. Examples: \"I fled to Kenya\" -> \"I made hijra to Kenya\"; \"I survived\" -> \"Alhamdulillah, I survived\". Each replacement must contain one of: {r_lexicon}.\n\nRules for every edit:\n- \"original\" must be copied exactly from the testimony (same characters, punctuation and case) and must occur exactly once in it. Keep it short: a clause or phrase, not a whole paragraph.\n- Edits within a set must not overlap each other.\n- \"replacement\" is what replaces \"original\"; it must fit grammatically.\n- Change nothing else.\n\nReturn JSON:\n{{\n  \"hedging\": [{{\"original\": \"...\", \"replacement\": \"...\"}}],\n  \"religious\": [{{\"original\": \"...\", \"replacement\": \"...\"}}]\n}}\n\nTESTIMONY:\n<<<\n{testimony}\n>>>",
       "leakcheck_system": "You audit research material for information leakage. You always answer with a single JSON object.",
       "leakcheck_user": "The testimony below was written from a refugee tribunal decision. It must contain ONLY the claimant's own account. Check whether anything from the tribunal leaked in:\n- the outcome, or any hint of it (accepted, rejected, granted, dismissed, allowed);\n- credibility findings or doubts, identified inconsistencies or omissions, implausibility;\n- legal analysis, tests, or references to the board, panel, member, hearing, counsel or evidence assessment;\n- statements that could only come from the decision-maker, not the claimant.\n\nReturn JSON: {{\"leak\": true | false, \"issues\": [\"<quote and explain each problem>\"]}}\n\nTESTIMONY:\n<<<\n{testimony}\n>>>"
     },
@@ -26,7 +43,7 @@
       "religion_rule": "5d3394f95802",
       "country_rule": "c245bfd5dff2",
       "annotate_system": "822ec8baca1c",
-      "annotate_user": "14141f3a95a0",
+      "annotate_user": "5ea27bbe95df",
       "leakcheck_system": "f8038a9c86cd",
       "leakcheck_user": "9ad4def58c7b"
     }
@@ -38,9 +55,10 @@
     "prompts": 600,
     "manual_review_passages": 20,
     "candidates_rejected_by_reason": {
-      "screened_out": 26,
-      "label_mismatch": 29,
-      "content_filter": 36
+      "country_named": 22,
+      "screened_out": 34,
+      "label_mismatch": 35,
+      "content_filter": 51
     }
   },
   "variants": [
@@ -78,6 +96,7 @@
   "config": {
     "dataset": {
       "hf_repo": "clairebarale/AsyLex",
+      "hf_revision": "ac20d3ac16b295bed6616f5b97d2a67596a867f8",
       "divisions": [
         "rpd",
         "crdd"
@@ -102,6 +121,7 @@
       "deployment": "gpt-4.1",
       "temperature": 0.0,
       "reasoning_effort": "",
+      "seed": 13,
       "max_output_tokens": 6000,
       "request_timeout_s": 180,
       "min_interval_s": 4.0,
@@ -140,7 +160,8 @@
           "roughly",
           "i am not certain",
           "i don't remember exactly"
-        ]
+        ],
+        "max_added_words": 6
       },
       "religious": {
         "min_edits": 2,
@@ -153,13 +174,12 @@
           "alhamdulillah",
           "mashallah",
           "bismillah",
-          "dua",
           "sabr",
           "masjid",
-          "salah",
           "ummah",
           "subhanallah"
-        ]
+        ],
+        "max_added_words": 5
       }
     },
     "names": {
