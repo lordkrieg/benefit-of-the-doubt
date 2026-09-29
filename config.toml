@@ -12,7 +12,7 @@ results_dir = "data/results"        # evaluation responses, analysis and figures
 # Evaluation (botd.evaluate, botd.analyze). Evaluated models use the same Azure endpoint
 # and key as the generator.
 [evaluate]
-seed = 13                           # sent with each request, for more repeatable sampling
+seed = 26                           # sent with each request, for more repeatable sampling
 
 [[evaluate.models]]
 name = "deepseek-v4-pro"            # label used in results
@@ -31,13 +31,14 @@ top_logprobs = 5
 # =======================================================================================
 # Benchmark generation (botd.generate).
 
-# The model that screens, rewrites and annotates the decisions. It should be from a different
-# model family than the evaluated models.
+# The model that screens, rewrites and annotates the decisions. Ideally from a different model
+# family than the evaluated models; gpt-6.1-sol shares OpenAI's family with gpt-6-luna (a stated
+# limitation). Never use an evaluated model here.
 [generate.model]
-deployment = "claude-opus-5-5"      # Azure AI Foundry deployment; AZURE_DEPLOYMENT overrides it
+deployment = "gpt-6.1-sol"          # Azure AI Foundry deployment; AZURE_DEPLOYMENT overrides it
 temperature = 0.0                   # dropped automatically for models that reject it
-reasoning_effort = ""               # e.g. "low" for reasoning models; empty = not sent
-seed = 13                           # sent with each request, for more repeatable sampling
+reasoning_effort = "low"            # some reasoning helps follow the extraction rules; "" = not sent
+seed = 26                           # sent with each request, for more repeatable sampling
 
 # Source decisions.
 [generate.asylex]
@@ -60,7 +61,7 @@ min_decision_chars = 4000           # skip decisions too short to contain an acc
 max_decision_chars = 40000          # truncate decision text sent to the model (the account comes early)
 
 [generate.sample]
-seed = 13
+seed = 26
 n_granted = 50
 n_refused = 50
 # Candidates drawn per target passage; extras replace decisions that fail screening or checks.
