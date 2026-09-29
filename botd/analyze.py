@@ -14,7 +14,7 @@ Scores are recomputed from the raw first-token logprobs in data/results/<model>/
 Per factor, each variant is compared with its contrast version of the same passage (baseline,
 or the consistently spelled Somali name for name_spelling):
 - credibility: mean paired change in expected rating (1-7), bootstrap 95% CI over passages,
-  Wilcoxon signed-rank test, Holm-corrected across the five factors;
+  Wilcoxon signed-rank test, Holm-corrected across the factors;
 - decision: mean paired change in P(grant), same tests; flip rate of the argmax decision,
   with an exact binomial test on the direction of the flips.
 """
@@ -31,19 +31,26 @@ from scipy import stats
 from . import eval_prompts as ep
 from . import scoring
 from .config import load_config
-from .evaluate import ModelRun, benchmark_dir, build_items, file_sha, results_dir
+from .evaluate import ModelRun, benchmark_dir, build_items, file_sha, principle_cues, results_dir
 from .store import OK, read_jsonl
+from .variants import interp_languages
 
+# Report labels; {language} is the factor's interpreter language from config.toml.
 FACTORS = {
     "name": "Somali name",
     "religious_vocabulary": "Islamic vocabulary",
-    "interpretation": "Interpreter mentioned",
-    "hedging": "Hedged dates and numbers",
+    "interpretation": "{language} interpreter",
+    "interpretation_other": "{language} interpreter",
     "name_spelling": "Two spellings of the name",
 }
 # Categorical slots 1-2 of the reference palette (light mode), in model order.
 MODEL_COLORS = ["#2a78d6", "#eb6834", "#1baf7a"]
 INK, INK_2, GRID, SURFACE = "#0b0b0b", "#52514e", "#e4e3df", "#fcfcfb"
+
+
+def factor_labels(cfg: dict) -> dict[str, str]:
+    langs = interp_languages(cfg)
+    return {f: label.format(language=langs.get(f, "")) for f, label in FACTORS.items()}
 
 
 def bootstrap_ci(x: np.ndarray, rng, n: int, stat=np.mean) -> list[float] | None:
@@ -256,7 +263,7 @@ def plot_effects(summary: dict, path: Path, key: str, title: str, xlabel: str) -
                 ax.annotate("*", (ci[1] if ci else mean, y), xytext=(4, -3), textcoords="offset points",
                             color=INK, fontsize=11)
     ax.set_yticks(range(len(factors)))
-    ax.set_yticklabels([FACTORS[f] for f in reversed(factors)], color=INK, fontsize=10)
+    ax.set_yticklabels([summary["factor_labels"][f] for f in reversed(factors)], color=INK, fontsize=10)
     lim = max(0.05, *(abs(v) for m in models for f in factors
                       for v in (summary["models"][m]["effects"][f][key.split(".")[0]]["ci95"] or [0])))
     ax.set_xlim(-lim * 1.25, lim * 1.25)
@@ -294,7 +301,7 @@ def plot_flips(summary: dict, path: Path) -> None:
                         (d["flip_rate"] * 100, y), xytext=(4, 0), textcoords="offset points", va="center",
                         color=INK_2, fontsize=8)
     ax.set_yticks(range(len(factors)))
-    ax.set_yticklabels([FACTORS[f] for f in reversed(factors)], color=INK, fontsize=10)
+    ax.set_yticklabels([summary["factor_labels"][f] for f in reversed(factors)], color=INK, fontsize=10)
     top = max([eff["decision"]["flip_rate"] or 0 for m in models for eff in summary["models"][m]["effects"].values()] + [0.05])
     ax.set_xlim(0, top * 100 * 1.8)
     ax.set_xlabel("Passages whose grant/refuse decision flips (%)", color=INK_2, fontsize=9)
@@ -327,7 +334,7 @@ def write_report(summary: dict, path: Path) -> None:
           f"{summary['n_passages']} passages. Scores are recomputed from first-token logprobs. "
           "Changes are variant minus contrast version of the same passage (the contrast for *two spellings* "
           "is the consistently spelled Somali name). CIs are 95% bootstrap over passages; p-values are "
-          "Wilcoxon signed-rank, Holm-corrected across the five factors.", ""]
+          f"Wilcoxon signed-rank, Holm-corrected across the {len(FACTORS)} factors.", ""]
     for m, s in summary["models"].items():
         L += [f"## {m}", ""]
         cov = s["coverage"]
@@ -339,14 +346,14 @@ def write_report(summary: dict, path: Path) -> None:
         L += ["### Credibility (1–7)", "",
               "| Factor | n | Mean change | 95% CI | Rated lower | Cohen's dz | p (Holm) |",
               "|---|---:|---:|---|---:|---:|---:|"]
-        for f, label in FACTORS.items():
+        for f, label in summary["factor_labels"].items():
             c = s["effects"][f]["credibility"]
             L.append(f"| {label} | {c['n']} | {_f(c['mean_change'])} | {_ci(c['ci95'])} | "
                      f"{_f(c['share_lower'], '{:.0%}')} | {_f(c['cohens_dz'])} | {_p(c['wilcoxon_p_holm'])} |")
         L += ["", "### Grant / refuse", "",
               "| Factor | n | Change in P(grant) | 95% CI | p (Holm) | Flip rate | To refuse | To grant | Direction p |",
               "|---|---:|---:|---|---:|---:|---:|---:|---:|"]
-        for f, label in FACTORS.items():
+        for f, label in summary["factor_labels"].items():
             d = s["effects"][f]["decision"]
             L.append(f"| {label} | {d['n']} | {_f(d['mean_change_p_grant'], '{:+.3f}')} | "
                      f"{_ci(d['ci95'], '{:+.3f}')} | {_p(d['wilcoxon_p_holm'])} | {_f(d['flip_rate'], '{:.0%}')} | "
@@ -356,7 +363,7 @@ def write_report(summary: dict, path: Path) -> None:
               "make testimony LESS or MORE credible or leave it the SAME. Does: the direction of a significant "
               "credibility effect above, else SAME.", "",
               "| Factor | P(less) | P(same) | P(more) | Says | Does | Consistent |", "|---|---:|---:|---:|---|---|---|"]
-        for f, label in FACTORS.items():
+        for f, label in summary["factor_labels"].items():
             st, sd = s["stated"][f], s["say_do"][f]
             pr = st["probs"] or {}
             L.append(f"| {label} | {_f(pr.get('less'), '{:.2f}')} | {_f(pr.get('same'), '{:.2f}')} | "
@@ -373,7 +380,7 @@ def write_report(summary: dict, path: Path) -> None:
               f"{_f(v['decision']['real_grant_rate'], '{:.0%}')}); agrees with the tribunal on "
               f"{_f(v['decision']['accuracy_vs_outcome'], '{:.0%}')}.", ""]
         L += ["### In its own words", ""]
-        for f, label in FACTORS.items():
+        for f, label in summary["factor_labels"].items():
             text = (s["stated"][f]["explanation"] or "–").strip().replace("\n", " ")
             L.append(f"- **{label}:** {text}")
         L.append("")
@@ -401,14 +408,14 @@ def main(argv=None) -> int:
     an.mkdir(parents=True, exist_ok=True)
     rows = read_jsonl(bench / "benchmark.jsonl")
     bench_sha = file_sha(bench / "benchmark.jsonl")
-    items = build_items(rows)
+    items = build_items(rows, principle_cues(cfg))
     min_mass = cfg["evaluate"]["min_answer_mass"]
     n_boot, seed = cfg["analysis"]["bootstrap_samples"], cfg["analysis"]["seed"]
 
     models = [m for m in cfg["evaluate"]["models"] if not args.model or m["name"] in args.model]
     summary = {"benchmark_sha256_12": bench_sha, "n_prompts": len(rows),
                "n_passages": len({r["passage_id"] for r in rows}), "min_answer_mass": min_mass,
-               "bootstrap_samples": n_boot, "models": {}}
+               "bootstrap_samples": n_boot, "factor_labels": factor_labels(cfg), "models": {}}
     all_scores = {}
     for m in models:
         run = ModelRun(cfg, m, items, out, bench_sha, print)

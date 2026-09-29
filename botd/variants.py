@@ -1,4 +1,4 @@
-"""Validation of LLM output, rule-based construction of the six versions, and diff checks.
+"""Validation of LLM output, rule-based construction of the passage versions, and diff checks.
 
 Every variant is built from the same template by deterministic substitution, and
 the diff check proves it by undoing the one intended change and comparing with the
@@ -16,13 +16,14 @@ VERSIONS = [
     ("name", "name", "baseline"),
     ("religious", "religious_vocabulary", "baseline"),
     ("interpretation", "interpretation", "baseline"),
-    ("hedging", "hedging", "baseline"),
+    ("interpretation_other", "interpretation_other", "baseline"),
     # Spelling is contrasted with the consistently spelled Somali name, so name
     # origin is held constant and only the inconsistency differs.
     ("name_spelling", "name_spelling", "name"),
 ]
 
-# Strong hedges only: "about"/"around" are too common in non-hedged use to ban from the baseline.
+# The baseline is plain and assertive. Strong hedges only: "about"/"around" are too common in
+# non-hedged use to ban.
 BASELINE_HEDGES = re.compile(
     r"\b(i think|maybe|perhaps|approximately|i believe|not sure|if i remember|roughly|i am not certain)\b", re.I
 )
@@ -120,21 +121,6 @@ def apply_edits(template: str, edits: list[dict]) -> str:
     return "".join(out + [template[pos:]])
 
 
-# Peripheral details a hedge may qualify: numbers, dates, counts, durations, times of day.
-DETAIL = re.compile(
-    r"\d|\b(january|february|march|april|may|june|july|august|september|october|november|december"
-    r"|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty"
-    r"|hundred|dozen|once|twice|several|few|first|second|third|last"
-    r"|morning|afternoon|evening|night|midnight|noon|days?|weeks?|months?|years?|hours?|minutes?"
-    r"|kilomet(er|re)s?|km|miles?|times)\b",
-    re.I,
-)
-# A hedge directly followed by the speaker (or another actor) doubts the event itself.
-HEDGED_ACTOR = re.compile(
-    r"\b(i think|i believe|maybe|perhaps|i am not certain|not sure|if i remember( correctly| right)?)\b,? "
-    r"(that )?(i|we|he|she|they)\b",
-    re.I,
-)
 ADDED_ACTS = re.compile(r"\b(pray\w*|worship\w*|fast(ed|ing)|recit\w*)\b", re.I)
 
 
@@ -149,28 +135,7 @@ def _insertions(orig: str, rep: str) -> list[tuple[str, str]]:
     ]
 
 
-def _check_hedge(orig: str, rep: str, markers: list[str]) -> list[str]:
-    p = []
-    missing = set(re.findall(r"\d+", orig)) - set(re.findall(r"\d+", rep))
-    if missing:
-        p.append(f"{rep!r} drops the numbers {sorted(missing)}")
-    if not DETAIL.search(orig):
-        p.append(f"{orig!r} has no date, number, count or duration to hedge; pick a detail")
-    marker_re = re.compile(
-        r"(?<!\w)(" + "|".join(re.escape(m) for m in sorted(markers, key=len, reverse=True)) + r")(?!\w)", re.I
-    )
-    for inserted, after in _insertions(orig, rep):
-        window = f"{inserted} {' '.join(after.split()[:3])}"
-        if HEDGED_ACTOR.search(window):
-            p.append(f"{rep!r} hedges whether someone acted; hedge only the detail (date, number, duration)")
-        for m in marker_re.finditer(inserted):
-            following = " ".join((inserted[m.end():] + " " + after).split()[:6])
-            if not DETAIL.search(following):
-                p.append(f"hedge {m.group(0)!r} in {rep!r} must come right before the detail it qualifies")
-    return p
-
-
-def _check_religious(orig: str, rep: str, lexicon: list[str]) -> list[str]:
+def _check_religious(orig: str, rep: str) -> list[str]:
     if any(ADDED_ACTS.search(inserted) for inserted, _ in _insertions(orig, rep)):
         return [f"{rep!r} adds an action (e.g. praying); only reword what is already there"]
     return []
@@ -178,27 +143,23 @@ def _check_religious(orig: str, rep: str, lexicon: list[str]) -> list[str]:
 
 def validate_annotate(obj: dict, template: str, cfg: dict, pair: dict) -> list[str]:
     p = []
-    for key, vcfg, terms in (
-        ("hedging", cfg["variants"]["hedging"], cfg["variants"]["hedging"]["markers"]),
-        ("religious", cfg["variants"]["religious"], cfg["variants"]["religious"]["lexicon"]),
-    ):
-        edits = obj.get(key)
-        if not isinstance(edits, list):
-            p.append(f'"{key}" must be a list')
-            continue
-        if not vcfg["min_edits"] <= len(edits) <= vcfg["max_edits"]:
-            p.append(f'"{key}" needs {vcfg["min_edits"]}-{vcfg["max_edits"]} edits, got {len(edits)}')
-        p += [f"{key}: {x}" for x in _locate(template, edits)[1]]
-        for e in edits:
-            orig, rep = e.get("original") or "", e.get("replacement") or ""
-            if rep and not _has_any(rep, terms):
-                p.append(f"{key}: replacement {rep!r} lacks a required term ({', '.join(terms[:5])}, ...)")
-            if orig and rep:
-                added = len(rep.split()) - len(orig.split())
-                if added > vcfg["max_added_words"]:
-                    p.append(f"{key}: {rep!r} adds {added} words; at most {vcfg['max_added_words']} allowed")
-                check = _check_hedge if key == "hedging" else _check_religious
-                p += [f"{key}: {x}" for x in check(orig, rep, terms)]
+    key, vcfg = "religious", cfg["variants"]["religious"]
+    terms = vcfg["lexicon"]
+    edits = obj.get(key)
+    if not isinstance(edits, list):
+        return [f'"{key}" must be a list']
+    if not vcfg["min_edits"] <= len(edits) <= vcfg["max_edits"]:
+        p.append(f'"{key}" needs {vcfg["min_edits"]}-{vcfg["max_edits"]} edits, got {len(edits)}')
+    p += [f"{key}: {x}" for x in _locate(template, edits)[1]]
+    for e in edits:
+        orig, rep = e.get("original") or "", e.get("replacement") or ""
+        if rep and not _has_any(rep, terms):
+            p.append(f"{key}: replacement {rep!r} lacks a required term ({', '.join(terms[:5])}, ...)")
+        if orig and rep:
+            added = len(rep.split()) - len(orig.split())
+            if added > vcfg["max_added_words"]:
+                p.append(f"{key}: {rep!r} adds {added} words; at most {vcfg['max_added_words']} allowed")
+            p += [f"{key}: {x}" for x in _check_religious(orig, rep)]
     if not p:
         versions = build_versions(template, obj, pair, cfg)
         p += [f"diff check {k}: {v}" for k, v in diff_check(versions, template, obj, pair, cfg).items() if v != "ok"]
@@ -214,17 +175,23 @@ def _fill(text: str, given: str, family: str) -> str:
     return text.replace("{FULL_NAME}", f"{given} {family}").replace("{GIVEN_NAME}", given)
 
 
-def _compose(header_name: tuple[str, str], body: str, cfg: dict, interp: bool = False) -> str:
+def _compose(header_name: tuple[str, str], body: str, cfg: dict, interp: str | None = None) -> str:
+    """`interp`: the interpretation variant whose interpreter sentence goes under the header."""
     parts = [_fill(cfg["passage"]["header"], *header_name)]
     if interp:
-        parts.append(_interp_sentence(cfg))
+        parts.append(_interp_sentence(cfg, interp))
     parts.append(body)
     return "\n\n".join(parts)
 
 
-def _interp_sentence(cfg: dict) -> str:
+def interp_languages(cfg: dict) -> dict[str, str]:
+    """Interpreter language of each interpretation variant."""
     v = cfg["variants"]["interpretation"]
-    return v["sentence"].format(language=v["language"])
+    return {"interpretation": v["language"], "interpretation_other": v["other_language"]}
+
+
+def _interp_sentence(cfg: dict, variant: str) -> str:
+    return cfg["variants"]["interpretation"]["sentence"].format(language=interp_languages(cfg)[variant])
 
 
 def build_versions(template: str, edits: dict, pair: dict, cfg: dict) -> dict[str, str]:
@@ -235,8 +202,8 @@ def build_versions(template: str, edits: dict, pair: dict, cfg: dict) -> dict[st
         "baseline": _compose(base, _fill(template, *base), cfg),
         "name": _compose(som, _fill(template, *som), cfg),
         "religious": _compose(base, _fill(apply_edits(template, edits["religious"]), *base), cfg),
-        "interpretation": _compose(base, _fill(template, *base), cfg, interp=True),
-        "hedging": _compose(base, _fill(apply_edits(template, edits["hedging"]), *base), cfg),
+        "interpretation": _compose(base, _fill(template, *base), cfg, interp="interpretation"),
+        "interpretation_other": _compose(base, _fill(template, *base), cfg, interp="interpretation_other"),
         # Header keeps the standard spelling; every mention in the account uses the alternative.
         "name_spelling": _compose(som, _fill(template, v["given_alt"], v["family"]), cfg),
     }
@@ -262,8 +229,8 @@ def diff_check(versions: dict[str, str], template: str, edits: dict, pair: dict,
     undo = {
         "name": undo_name,
         "religious": lambda t: _undo_edits(t, edits["religious"]),
-        "hedging": lambda t: _undo_edits(t, edits["hedging"]),
-        "interpretation": lambda t: t.replace(_interp_sentence(cfg) + "\n\n", "", 1),
+        "interpretation": lambda t: t.replace(_interp_sentence(cfg, "interpretation") + "\n\n", "", 1),
+        "interpretation_other": lambda t: t.replace(_interp_sentence(cfg, "interpretation_other") + "\n\n", "", 1),
         "name_spelling": lambda t: re.sub(rf"\b{re.escape(v['given_alt'])}\b", v["given"], t),
     }
     for variant, _factor, contrast in VERSIONS[1:]:

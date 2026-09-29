@@ -5,7 +5,7 @@
     uv run python -m botd.generate --stage assemble
     uv run python -m botd.generate --mock       # offline dry run with a fake LLM
 
-Stages: prepare -> extract (screen + rewrite) -> annotate (hedging / religious edits)
+Stages: prepare -> extract (screen + rewrite) -> annotate (religious-vocabulary edits)
 -> leakcheck -> assemble. Each LLM stage appends one fsynced JSONL record per case
 under work_dir, so an interrupted or rate-limited run resumes where it stopped.
 """
@@ -80,8 +80,8 @@ def stage_versions(cfg: dict) -> dict[str, str]:
     annotate = _hash(
         "annotate", extract, az, cfg["variants"], cfg["names"],
         [prompts.ANNOTATE_SYSTEM, prompts.ANNOTATE_USER],
-        [variants.DETAIL.pattern, variants.HEDGED_ACTOR.pattern, variants.ADDED_ACTS.pattern],
-        _src(variants.validate_annotate, variants._check_hedge, variants._check_religious, variants._insertions,
+        [variants.ADDED_ACTS.pattern],
+        _src(variants.validate_annotate, variants._check_religious, variants._insertions,
              variants._locate, variants.build_versions, variants.diff_check, Pipeline.annotate),
     )
     leakcheck = _hash(
@@ -184,10 +184,6 @@ class Pipeline:
         template = ext["template"]
         pair = variants.pick_names(case["case_id"], ext["claimant_gender"], cfg)
         user = prompts.ANNOTATE_USER.format(
-            h_min=vc["hedging"]["min_edits"],
-            h_max=vc["hedging"]["max_edits"],
-            h_markers=", ".join(f'"{m}"' for m in vc["hedging"]["markers"]),
-            h_added=vc["hedging"]["max_added_words"],
             r_added=vc["religious"]["max_added_words"],
             r_min=vc["religious"]["min_edits"],
             r_max=vc["religious"]["max_edits"],
@@ -196,7 +192,7 @@ class Pipeline:
         )
         msgs = [{"role": "system", "content": prompts.ANNOTATE_SYSTEM}, {"role": "user", "content": user}]
         obj, meta = self.llm.chat_json(msgs, lambda o: variants.validate_annotate(o, template, cfg, pair))
-        return OK, {"hedging": obj["hedging"], "religious": obj["religious"], "meta": meta}
+        return OK, {"religious": obj["religious"], "meta": meta}
 
     def leakcheck(self, case: dict, ext: dict):
         pair = variants.pick_names(case["case_id"], ext["claimant_gender"], self.cfg)
@@ -311,7 +307,7 @@ def assemble(pipe: Pipeline, cands: list[dict], cfg: dict, out: Path, log) -> No
         cid = case["case_id"]
         ext, ann, leak = (pipe.logs[s].final(cid) for s in STAGES)
         pair = variants.pick_names(cid, ext["claimant_gender"], cfg)
-        edits = {"hedging": ann["hedging"], "religious": ann["religious"]}
+        edits = {"religious": ann["religious"]}
         versions = variants.build_versions(ext["template"], edits, pair, cfg)
         checks = variants.diff_check(versions, ext["template"], edits, pair, cfg)
         if any(v != "ok" for v in checks.values()):

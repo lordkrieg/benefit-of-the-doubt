@@ -2,7 +2,7 @@
 
 ## Question
 
-When a small language model assesses asylum testimony, does its credibility judgment change with details that should not matter: the claimant's name, religious vocabulary, whether the testimony was interpreted, or ordinary hedging?
+When a small language model assesses asylum testimony, does its credibility judgment change with details that should not matter: the claimant's name, religious vocabulary, or whether the testimony was interpreted?
 
 ## Why it matters (Q1)
 
@@ -25,14 +25,14 @@ Standard bias benchmarks (BBQ, StereoSet and similar) test short, synthetic sent
 **Controlled variants:** each passage is turned into matched versions that differ in exactly one factor.
 
 - Where possible the edit is done by simple, rule-based substitution, not by the LLM: swapping the name, inserting the interpreter sentence, changing a name's spelling. This guarantees nothing else changes.
-- The LLM is used only where the edit needs rewriting (hedging, religious vocabulary), with instructions to change nothing else.
+- The LLM is used only where the edit needs rewriting (religious vocabulary), with instructions to change nothing else.
 
 | Factor               | Baseline                                    | Variant                                                |
 | -------------------- | ------------------------------------------- | ------------------------------------------------------ |
-| Name                 | Neutral / European name (e.g. _Lars Olsen_) | Somali name (e.g. _Mahamed Abdi Farah_)                |
+| Name                 | Neutral / European name (e.g. _Lars Olsen_) | Somali name (e.g. _Mahamed Abdi Farah_; 8 per gender)  |
 | Religious vocabulary | "I fled to Kenya"                           | "I made hijra to Kenya"                                |
 | Interpretation       | No mention                                  | "Testimony was given through a Somali interpreter"     |
-| Hedging              | "It was March 2019"                         | "I think it was around March 2019"                     |
+| Interpretation (control) | No mention                              | "Testimony was given through a Spanish interpreter"    |
 | Name spelling        | Consistent spelling                         | Two spellings across the account (_Mohamed / Maxamed_) |
 
 That gives roughly 100 passages × 6 versions (the baseline plus five variants) ≈ **600 prompts**. The account of persecution stays the same in every version.
@@ -57,7 +57,7 @@ That gives roughly 100 passages × 6 versions (the baseline plus five variants) 
 
 1. **Credibility score:** prompt the model, acting as a decision assistant, to rate credibility from 1 to 7. Take the probability-weighted average over the digit tokens instead of sampling text, which is deterministic and needs one forward pass per prompt.
 2. **Decision:** ask whether to grant or refuse, and score by the log-probabilities of the two answers.
-3. **Stated principles:** separately ask the model directly whether hedging, interpretation or a Muslim name should affect credibility. Comparing this answer with steps 1–2 exposes any gap between what the model says and what it does.
+3. **Stated principles:** separately ask the model directly whether interpretation, religious vocabulary or a Muslim name should affect credibility. Comparing this answer with steps 1–2 exposes any gap between what the model says and what it does.
 
 **Analysis:**
 
@@ -84,7 +84,7 @@ AsyLex has no country-of-origin field, but citizenship can be recovered from its
 
 Comparing raw scores across countries would be confounded: persecution type, strength of evidence and real grant rates all vary by country. Country is also legitimately relevant to _risk_ (whether the fear is well-founded), though not to _credibility_. The larger study would therefore use country in two controlled ways:
 
-- **Sampling across regions, with effects compared by region:** sample decisions across regions, then test whether the within-testimony effects (name, hedging, interpretation) are larger for some groups. For example, does hedging cost a Somali claimant more than a Colombian one?
+- **Sampling across regions, with effects compared by region:** sample decisions across regions, then test whether the within-testimony effects (name, religious vocabulary, interpretation) are larger for some groups. For example, does an interpreter cost a Somali claimant more than a Colombian one?
 - **Comparison with real outcomes:** per region, compare the model's grant probability with the tribunal's actual decision. "The model is harsher than the tribunal on claimants from X" is defensible where a raw gap between regions is not.
 
 **A sharper contrast than Global North vs. South:** Canada's Designated Countries of Origin policy (2012–2019) marked mostly European countries, including Hungary and the Czech Republic, as "safe". Claims from those countries, many of them from Roma, were fast-tracked as presumed unfounded. Comparing Roma claimants from Hungary and the Czech Republic with Somali, Nigerian and Colombian claimants would show whether a model copies the tribunal's skepticism toward "safe country" claimants, the general pattern of bias against Global South claimants, or both.

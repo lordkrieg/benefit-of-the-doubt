@@ -31,6 +31,7 @@ from pathlib import Path
 
 from . import eval_prompts as ep
 from .config import load_config
+from .variants import interp_languages
 from .generate import Logger, _hash, git_state
 from .llm import AzureLLM, BadOutput, ContentFiltered, FatalError, QuotaExhausted, TransientError
 from .store import ERROR, OK, REJECTED, StageLog, read_jsonl
@@ -54,16 +55,23 @@ def file_sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
 
 
+def principle_cues(cfg: dict) -> dict[str, dict[str, str]]:
+    """PRINCIPLE_CUES with each interpretation factor's language filled in."""
+    langs = interp_languages(cfg)
+    return {f: {k: v.format(language=langs.get(f, "")) for k, v in cue.items()}
+            for f, cue in ep.PRINCIPLE_CUES.items()}
+
+
 def model_version(cfg: dict, m: dict, bench_sha: str) -> str:
     ev = cfg["evaluate"]
     return _hash(
         "evaluate", {k: m.get(k) for k in MODEL_KEYS}, cfg["azure"].get("seed"),
-        ev["answer_max_tokens"], ev["explain_max_tokens"], ep.ALL, ep.PRINCIPLE_CUES,
+        ev["answer_max_tokens"], ev["explain_max_tokens"], ep.ALL, principle_cues(cfg),
         ep.DECISION_OPTIONS, ep.PRINCIPLE_OPTIONS, bench_sha,
     )
 
 
-def build_items(rows: list[dict], limit: int | None = None) -> list[dict]:
+def build_items(rows: list[dict], cues: dict[str, dict[str, str]], limit: int | None = None) -> list[dict]:
     """Every request of the study, keyed so responses can be matched on resume."""
     if limit:
         keep = list(dict.fromkeys(r["passage_id"] for r in rows))[:limit]
@@ -77,7 +85,7 @@ def build_items(rows: list[dict], limit: int | None = None) -> list[dict]:
         for task, tmpl in (("credibility", ep.CREDIBILITY_USER), ("decision", ep.DECISION_USER)):
             items.append({"key": f"{r['id']}|{task}", "task": task, "row_id": r["id"],
                           "messages": msgs(tmpl.format(testimony=r["text"]))})
-    for factor, cue in ep.PRINCIPLE_CUES.items():
+    for factor, cue in cues.items():
         for i, tmpl in enumerate(ep.PRINCIPLE_USER):
             items.append({"key": f"principle|{factor}|{i}", "task": "principle", "factor": factor,
                           "paraphrase": i, "messages": msgs(tmpl.format(**cue))})
@@ -215,7 +223,7 @@ def write_manifest(cfg: dict, runs: list[ModelRun], bench: Path, out: Path, limi
         "models": models,
         "evaluate_settings": cfg["evaluate"] | {"models": cfg["evaluate"]["models"]},
         "prompts": ep.ALL,
-        "principle_cues": ep.PRINCIPLE_CUES,
+        "principle_cues": principle_cues(cfg),
         "prompt_sha256_12": ep.prompt_hashes(),
     }
     out.mkdir(parents=True, exist_ok=True)
@@ -237,7 +245,7 @@ def main(argv=None) -> int:
     log = Logger(out / "run.log")
     rows = read_jsonl(bench / "benchmark.jsonl")
     bench_sha = file_sha(bench / "benchmark.jsonl")
-    items = build_items(rows, args.limit)
+    items = build_items(rows, principle_cues(cfg), args.limit)
 
     models = cfg["evaluate"]["models"]
     if args.model:

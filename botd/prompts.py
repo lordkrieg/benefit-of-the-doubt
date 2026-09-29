@@ -70,19 +70,9 @@ changes one short phrase and nothing else. You always answer with a single JSON 
 ANNOTATE_USER = """Here is a first-person asylum testimony. {{FULL_NAME}} and {{GIVEN_NAME}} are \
 name placeholders: leave them untouched and never include them in an edit.
 
-Create two independent sets of phrase-level edits.
+Create one set of phrase-level edits.
 
-A. HEDGING ({h_min}-{h_max} edits). Hedge peripheral details only: dates, times, durations, \
-counts and distances, as an honest witness with imperfect memory would. Pick phrases that \
-contain such a detail, and put the hedge immediately before the detail it qualifies. Never \
-hedge whether something happened or whether someone acted: "I think I left in 2010", "I was \
-hit by a car, if I remember correctly" and "if I remember correctly, I was arrested" are \
-forbidden. Right: "It was March 2019" -> "I think it was around March 2019"; "for four days" \
--> "for about four days"; "I left in 2010" -> "I left in what I think was 2010". Keep every \
-number and date from the original, and add at most {h_added} words per edit. Each replacement \
-must contain a hedge such as: {h_markers}.
-
-B. RELIGIOUS VOCABULARY ({r_min}-{r_max} edits). Rephrase existing phrases with ordinary \
+RELIGIOUS VOCABULARY ({r_min}-{r_max} edits). Rephrase existing phrases with ordinary \
 Islamic religious vocabulary a devout Muslim might use, without changing any fact or adding \
 events. Every expression must carry its correct meaning, as a native speaker would use it: \
 "hijra" for leaving or fleeing to another place; "alhamdulillah" for gratitude or relief \
@@ -96,13 +86,12 @@ words per edit. Examples: "I fled to Kenya" -> "I made hijra to Kenya"; "I survi
 Rules for every edit:
 - "original" must be copied exactly from the testimony (same characters, punctuation and case) \
 and must occur exactly once in it. Keep it short: a clause or phrase, not a whole paragraph.
-- Edits within a set must not overlap each other.
+- Edits must not overlap each other.
 - "replacement" is what replaces "original"; it must fit grammatically.
 - Change nothing else.
 
 Return JSON:
 {{
-  "hedging": [{{"original": "...", "replacement": "..."}}],
   "religious": [{{"original": "...", "replacement": "..."}}]
 }}
 
