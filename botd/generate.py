@@ -15,34 +15,30 @@ import csv
 import hashlib
 import inspect
 import json
+import logging
 import random
 import re
 import subprocess
 import sys
-import threading
 import time
 from pathlib import Path
 
 from . import asylex, prompts, variants
-from .config import ROOT, load_config, public_config
+from .config import ROOT, generator_az, load_config, public_config
 from .llm import AzureLLM, BadOutput, ContentFiltered, FatalError, QuotaExhausted, TransientError
 from .store import ERROR, OK, REJECTED, StageLog, read_jsonl, write_jsonl
 
 STAGES = ("extract", "annotate", "leakcheck")
 
 
-class Logger:
-    def __init__(self, path: Path):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self.f = open(path, "a", encoding="utf-8")
-        self._lock = threading.Lock()  # shared by the evaluation's per-model threads
-
-    def __call__(self, msg: str):
-        line = f"[{time.strftime('%H:%M:%S')}] {msg}"
-        with self._lock:
-            print(line, flush=True)
-            self.f.write(line + "\n")
-            self.f.flush()
+def open_log(path: Path):
+    """Log to the console and to `path`; returns the log function (thread-safe)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handlers = [logging.StreamHandler(sys.stdout), logging.FileHandler(path, encoding="utf-8")]
+    logging.basicConfig(format="[%(asctime)s] %(message)s", datefmt="%H:%M:%S", handlers=handlers, force=True)
+    logger = logging.getLogger("botd")  # other libraries stay at the root's WARNING level
+    logger.setLevel(logging.INFO)
+    return logger.info
 
 
 def clean(text: str) -> str:
@@ -61,7 +57,8 @@ def _src(*objs) -> list[str]:
 
 def pool_version(cfg: dict) -> str:
     """Everything that determines the candidate pool."""
-    return _hash("pool", cfg["dataset"], cfg["sample"], inspect.getsource(asylex))
+    g = cfg["generate"]
+    return _hash("pool", g["asylex"], g["sample"], inspect.getsource(asylex))
 
 
 def stage_versions(cfg: dict) -> dict[str, str]:
@@ -70,22 +67,23 @@ def stage_versions(cfg: dict) -> dict[str, str]:
     Records from any other version are ignored, so a change reruns exactly the stages it
     affects. Operational settings (pacing, retries, timeouts, output-token cap) are excluded.
     """
-    az = {k: cfg["azure"].get(k) for k in ("deployment", "temperature", "reasoning_effort")}
+    g = cfg["generate"]
+    az = {k: g["model"].get(k) for k in ("deployment", "temperature", "reasoning_effort")}
     extract = _hash(
-        "extract", az, cfg["passage"], cfg["dataset"]["max_chars"],
+        "extract", az, g["passage"], g["asylex"]["max_decision_chars"],
         [prompts.EXTRACT_SYSTEM, prompts.EXTRACT_USER, prompts.RELIGION_RULE, prompts.COUNTRY_RULE],
         [variants.BASELINE_HEDGES.pattern, variants.LEAK_TERMS.pattern, variants.BASELINE_RELIGIOUS],
         _src(variants.validate_extract, Pipeline.extract, clean),
     )
     annotate = _hash(
-        "annotate", extract, az, cfg["variants"], cfg["names"],
+        "annotate", extract, az, g["variants"], g["names"],
         [prompts.ANNOTATE_SYSTEM, prompts.ANNOTATE_USER],
         [variants.ADDED_ACTS.pattern],
         _src(variants.validate_annotate, variants._check_religious, variants._insertions,
              variants._locate, variants.build_versions, variants.diff_check, Pipeline.annotate),
     )
     leakcheck = _hash(
-        "leakcheck", extract, az, cfg["names"],
+        "leakcheck", extract, az, g["names"],
         [prompts.LEAKCHECK_SYSTEM, prompts.LEAKCHECK_USER],
         _src(Pipeline.leakcheck),
     )
@@ -99,8 +97,8 @@ def ensure_candidates(cfg: dict, work: Path, log, rebuild: bool = False) -> list
         if json.loads(meta_path.read_text(encoding="utf-8")).get("version") == version:
             return read_jsonl(path)
         log("dataset/sample settings or sampling code changed; rebuilding the candidate pool")
-    ds = cfg["dataset"]
-    paths = asylex.download(ds["hf_repo"], ds["hf_revision"], cfg["paths"]["raw_dir"], cfg["hf_token"], log)
+    src = cfg["generate"]["asylex"]
+    paths = asylex.download(src["repo"], src["revision"], cfg["paths"]["raw_dir"], cfg["hf_token"])
     log("scanning AsyLex decisions (takes a minute)...")
     cands = asylex.build_candidates(paths, cfg, log)
     write_jsonl(path, cands)
@@ -147,14 +145,14 @@ class Pipeline:
 
     def extract(self, case: dict):
         cfg = self.cfg
-        pc = cfg["passage"]
+        pc = cfg["generate"]["passage"]
         user = prompts.EXTRACT_USER.format(
             case_id=case["case_id"],
             min_words=pc["min_words"],
             max_words=pc["max_words"],
-            religion_rule=prompts.RELIGION_RULE if pc["require_religion_compatible"] else "",
-            country_rule=prompts.COUNTRY_RULE if pc["generalize_country"] else "",
-            text=clean(case["text"])[: cfg["dataset"]["max_chars"]],
+            religion_rule=prompts.RELIGION_RULE if pc["exclude_non_muslim_religious_claims"] else "",
+            country_rule=prompts.COUNTRY_RULE if pc["hide_country"] else "",
+            text=clean(case["text"])[: cfg["generate"]["asylex"]["max_decision_chars"]],
         )
         msgs = [{"role": "system", "content": prompts.EXTRACT_SYSTEM}, {"role": "user", "content": user}]
         obj, meta = self.llm.chat_json(msgs, lambda o: variants.validate_extract(o, cfg))
@@ -180,7 +178,7 @@ class Pipeline:
         return OK, fields
 
     def annotate(self, case: dict, ext: dict):
-        cfg, vc = self.cfg, self.cfg["variants"]
+        cfg, vc = self.cfg, self.cfg["generate"]["variants"]
         template = ext["template"]
         pair = variants.pick_names(case["case_id"], ext["claimant_gender"], cfg)
         user = prompts.ANNOTATE_USER.format(
@@ -215,7 +213,7 @@ class Pipeline:
 
     def gate(self, ext: dict) -> str | None:
         """Deterministic checks on an accepted extraction. Returns a rejection reason or None."""
-        if self.cfg["passage"]["generalize_country"] and variants.names_origin(ext["template"], ext["country_of_origin"]):
+        if self.cfg["generate"]["passage"]["hide_country"] and variants.names_origin(ext["template"], ext["country_of_origin"]):
             return "country_named"
         return None
 
@@ -247,7 +245,8 @@ class Pipeline:
 
 
 def targets(cfg: dict) -> dict[int, int]:
-    return {1: cfg["sample"]["n_granted"], 0: cfg["sample"]["n_refused"]}
+    sample = cfg["generate"]["sample"]
+    return {1: sample["n_granted"], 0: sample["n_refused"]}
 
 
 def run_generation(pipe: Pipeline, cands: list[dict], cfg: dict, log) -> bool:
@@ -288,7 +287,7 @@ def run_generation(pipe: Pipeline, cands: list[dict], cfg: dict, log) -> bool:
         if pending:
             log(f"incomplete: {pending} candidates still pending (errors); rerun to retry them.")
         else:
-            log("candidate pool exhausted before reaching the target; raise sample.candidate_pool_multiplier "
+            log("candidate pool exhausted before reaching the target; raise generate.sample.candidates_per_target "
                 "and rerun with --rebuild-candidates.")
     return done
 
@@ -356,8 +355,8 @@ def assemble(pipe: Pipeline, cands: list[dict], cfg: dict, out: Path, log) -> No
     write_jsonl(out / "passages.jsonl", passages)
     write_jsonl(out / "benchmark.jsonl", rows)
 
-    rng = random.Random(cfg["dataset"]["seed"])
-    k = max(1, round(len(passages) * cfg["sample"]["manual_review_fraction"])) if passages else 0
+    rng = random.Random(cfg["generate"]["sample"]["seed"])
+    k = max(1, round(len(passages) * cfg["generate"]["sample"]["manual_review_fraction"])) if passages else 0
     review_ids = {p["passage_id"] for p in rng.sample(passages, k)}
     tmp = out / "manual_review.csv.tmp"
     with open(tmp, "w", encoding="utf-8-sig", newline="") as f:
@@ -385,17 +384,17 @@ def assemble(pipe: Pipeline, cands: list[dict], cfg: dict, out: Path, log) -> No
     manifest = {
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "source": {
-            "dataset": f"https://huggingface.co/datasets/{cfg['dataset']['hf_repo']}",
+            "dataset": f"https://huggingface.co/datasets/{cfg['generate']['asylex']['repo']}",
             "citation": "Barale, Rovatsos & Bhuta (2023). Automated Refugee Case Analysis: An NLP Pipeline "
             "for Supporting Legal Practitioners. Findings of ACL 2023.",
             "license": "CC BY-NC-SA 4.0 (research use only); this derived dataset uses the same licence.",
         },
         "generator": {
             "code": git_state(),
-            "asylex_revision": cfg["dataset"]["hf_revision"],
+            "asylex_revision": cfg["generate"]["asylex"]["revision"],
             "candidate_pool_version": pool_version(cfg),
             "stage_versions": pipe.versions,
-            "deployment": cfg["azure"]["deployment"],
+            "deployment": cfg["generate"]["model"]["deployment"],
             "model_versions": sorted(v for v in model_versions if v),
             "system_fingerprints": sorted(f for f in fingerprints if f),
             "prompts": prompts.ALL,
@@ -442,10 +441,10 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     cfg = load_config(args.config) if args.config else load_config()
-    work, out = cfg["paths"]["work_dir"], cfg["paths"]["output_dir"]
+    work, out = cfg["paths"]["work_dir"], cfg["paths"]["benchmark_dir"]
     if args.mock:
         work, out = work / "mock", out / "mock"
-    log = Logger(work / "run.log")
+    log = open_log(work / "run.log")
 
     cands = ensure_candidates(cfg, cfg["paths"]["work_dir"], log, args.rebuild_candidates)
     if args.stage == "prepare":
@@ -456,10 +455,10 @@ def main(argv=None) -> int:
         if args.mock:
             from .mock import MockLLM
 
-            llm = MockLLM(cfg["azure"], {c["case_id"]: c["outcome"] for c in cands})
+            llm = MockLLM(generator_az(cfg), {c["case_id"]: c["outcome"] for c in cands})
         else:
             try:
-                llm = AzureLLM(cfg["azure"], log)
+                llm = AzureLLM(generator_az(cfg), log)
             except FatalError as e:
                 log(f"ERROR: {e}")
                 return 2

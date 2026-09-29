@@ -2,9 +2,11 @@
 
 Matched-variant benchmark for bias in LLM credibility judgments on asylum testimony. See [RESEARCH_PROPOSAL.md](RESEARCH_PROPOSAL.md).
 
+The [Makefile](Makefile) wraps the commands below: `make generate`, `make evaluate`, `make analyze`, `make status`, `make smoke`, `make mock`; `make` alone lists them.
+
 ## Generating the benchmark
 
-Secrets go in `.env` (`AZURE_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `HUGGINGFACE`); research settings in [config.toml](config.toml). Set `azure.deployment` to your Azure AI Foundry chat deployment (or export `AZURE_DEPLOYMENT`).
+Secrets go in `.env` (`AZURE_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `HUGGINGFACE`); research settings in [config.toml](config.toml). Generation settings are under `[generate.*]`, evaluation settings under `[evaluate]`. Set `generate.model.deployment` to your Azure AI Foundry chat deployment (or export `AZURE_DEPLOYMENT`).
 
 ```sh
 uv run python -m botd.generate              # run, or resume after an interruption / rate limit
@@ -20,7 +22,7 @@ Every LLM stage appends one fsynced JSONL record per case to `data/work/`, so re
 ### Reproducibility
 
 - **Versioned stages.** Each record carries its stage's version: a hash of the stage's prompts, validator code, relevant `config.toml` settings, model settings and the upstream stage's version. Records from other versions are ignored (but kept), so changing a prompt, validator or setting reruns exactly the affected stages, and the dataset never mixes versions. Operational settings (pacing, retries) don't affect versions.
-- **Deterministic selection.** The candidate pool depends only on the pinned AsyLex revision, `[dataset]`/`[sample]` settings and the seed; it is rebuilt automatically when those change. Passages are accepted in pool order, so `--stage assemble` over the same work logs always produces identical outputs.
+- **Deterministic selection.** The candidate pool depends only on the pinned AsyLex revision, `[generate.asylex]`/`[generate.sample]` settings and the seed; it is rebuilt automatically when those change. Passages are accepted in pool order, so `--stage assemble` over the same work logs always produces identical outputs.
 - **LLM outputs.** Requests use `temperature = 0` and a fixed `seed`, and each record stores the model version and `system_fingerprint`, but Azure OpenAI does not guarantee identical outputs. The work logs in `data/work/` (`extract/annotate/leakcheck.jsonl`) are therefore the reproducible record of generation: publish them alongside the dataset. `passages.jsonl` alone (templates + edits + names) is enough to rebuild every prompt.
 - **Provenance.** `manifest.json` records the git commit (and whether code/config had uncommitted changes), the AsyLex revision, stage versions, model versions and fingerprints, and the full prompts. Commit the code before a final run so the recorded commit is clean.
 
@@ -64,6 +66,6 @@ uv run python -m botd.analyze                      # re-run the analysis only
 - how baseline scores relate to the tribunal's real outcome (AUC, agreement);
 - agreement between the two models.
 
-Outputs: `report.md`, `summary.json`, `effects.csv`, `scores.csv` (one row per model × prompt), and figures `credibility_effects.png`, `grant_effects.png` and `decision_flips.png`.
+Outputs: `summary.json` (every statistic, plus the models' free-text explanations), `effects.csv` (one row per model × factor), `scores.csv` (one row per model × prompt), and figures `credibility_effects.png`, `grant_effects.png` and `decision_flips.png`.
 
 AsyLex (Barale et al., 2023) is CC BY-NC-SA 4.0; the derived dataset uses the same licence.

@@ -32,7 +32,7 @@ from pathlib import Path
 from . import eval_prompts as ep
 from .config import load_config
 from .variants import interp_languages
-from .generate import Logger, _hash, git_state
+from .generate import _hash, git_state, open_log
 from .llm import AzureLLM, BadOutput, ContentFiltered, FatalError, QuotaExhausted, TransientError
 from .store import ERROR, OK, REJECTED, StageLog, read_jsonl
 
@@ -47,7 +47,7 @@ def results_dir(cfg: dict, mock: bool = False) -> Path:
 
 
 def benchmark_dir(cfg: dict, mock: bool = False) -> Path:
-    d = cfg["paths"]["output_dir"]
+    d = cfg["paths"]["benchmark_dir"]
     return d / "mock" if mock and (d / "mock" / "benchmark.jsonl").exists() else d
 
 
@@ -65,7 +65,7 @@ def principle_cues(cfg: dict) -> dict[str, dict[str, str]]:
 def model_version(cfg: dict, m: dict, bench_sha: str) -> str:
     ev = cfg["evaluate"]
     return _hash(
-        "evaluate", {k: m.get(k) for k in MODEL_KEYS}, cfg["azure"].get("seed"),
+        "evaluate", {k: m.get(k) for k in MODEL_KEYS}, cfg["evaluate"]["seed"],
         ev["answer_max_tokens"], ev["explain_max_tokens"], ep.ALL, principle_cues(cfg),
         ep.DECISION_OPTIONS, ep.PRINCIPLE_OPTIONS, bench_sha,
     )
@@ -95,12 +95,13 @@ def build_items(rows: list[dict], cues: dict[str, dict[str, str]], limit: int | 
 
 
 def model_az(cfg: dict, m: dict) -> dict:
-    """Azure client settings for one evaluated model: shared endpoint and retry policy, own model."""
+    """Azure client settings for one evaluated model: shared connection and retry policy, own model."""
     az = dict(cfg["azure"])
     az.update(
         deployment=m["deployment"],
         temperature=m.get("temperature"),
         reasoning_effort=m.get("reasoning_effort", ""),
+        seed=cfg["evaluate"]["seed"],
         min_interval_s=m.get("min_interval_s", az["min_interval_s"]),
         json_mode=False,
     )
@@ -196,7 +197,7 @@ class ModelRun:
         return {
             "version": self.version,
             "settings": {k: self.m.get(k) for k in MODEL_KEYS},
-            "seed": self.cfg["azure"].get("seed"),
+            "seed": self.cfg["evaluate"]["seed"],
             "model_versions": sorted({r.get("model_version") for r in recs if r.get("model_version")}),
             "system_fingerprints": sorted({r.get("system_fingerprint") for r in recs if r.get("system_fingerprint")}),
             "counts": self.counts(),
@@ -242,7 +243,7 @@ def main(argv=None) -> int:
 
     cfg = load_config(args.config) if args.config else load_config()
     out, bench = results_dir(cfg, args.mock), benchmark_dir(cfg, args.mock)
-    log = Logger(out / "run.log")
+    log = open_log(out / "run.log")
     rows = read_jsonl(bench / "benchmark.jsonl")
     bench_sha = file_sha(bench / "benchmark.jsonl")
     items = build_items(rows, principle_cues(cfg), args.limit)

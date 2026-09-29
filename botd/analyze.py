@@ -8,7 +8,6 @@ Scores are recomputed from the raw first-token logprobs in data/results/<model>/
 - summary.json: every statistic below, per model;
 - effects.csv: one row per model x factor;
 - scores.csv: one row per model x benchmark prompt (credibility score, P(grant), answer mass);
-- report.md: tables and the models' own explanations;
 - credibility_effects.png, grant_effects.png, decision_flips.png.
 
 Per factor, each variant is compared with its contrast version of the same passage (baseline,
@@ -43,9 +42,6 @@ FACTORS = {
     "interpretation_other": "{language} interpreter",
     "name_spelling": "Two spellings of the name",
 }
-# Categorical slots 1-2 of the reference palette (light mode), in model order.
-MODEL_COLORS = ["#2a78d6", "#eb6834", "#1baf7a"]
-INK, INK_2, GRID, SURFACE = "#0b0b0b", "#52514e", "#e4e3df", "#fcfcfb"
 
 
 def factor_labels(cfg: dict) -> dict[str, str]:
@@ -53,12 +49,14 @@ def factor_labels(cfg: dict) -> dict[str, str]:
     return {f: label.format(language=langs.get(f, "")) for f, label in FACTORS.items()}
 
 
-def bootstrap_ci(x: np.ndarray, rng, n: int, stat=np.mean) -> list[float] | None:
+def bootstrap_ci(x: np.ndarray, rng, n: int) -> list[float] | None:
+    """95% percentile bootstrap CI of the mean."""
     if len(x) < 2:
         return None
-    idx = rng.integers(0, len(x), size=(n, len(x)))
-    boots = stat(x[idx], axis=1)
-    return [float(np.percentile(boots, 2.5)), float(np.percentile(boots, 97.5))]
+    if np.all(x == x[0]):  # no spread: scipy would warn and return NaN
+        return [float(x[0]), float(x[0])]
+    ci = stats.bootstrap((x,), np.mean, n_resamples=n, method="percentile", rng=rng).confidence_interval
+    return [float(ci.low), float(ci.high)]
 
 
 def wilcoxon_p(d: np.ndarray) -> float | None:
@@ -224,175 +222,58 @@ def coverage(run: ModelRun, rows: list[dict], scores: dict) -> dict:
 # --- figures -----------------------------------------------------------------------------
 
 
-def _style(ax, plt):
-    ax.set_facecolor(SURFACE)
-    for side in ("top", "right", "left"):
-        ax.spines[side].set_visible(False)
-    ax.spines["bottom"].set_color(GRID)
-    ax.tick_params(colors=INK_2, labelsize=9, length=0)
-    ax.xaxis.grid(True, color=GRID, linewidth=0.8)
-    ax.set_axisbelow(True)
-
-
-def plot_effects(summary: dict, path: Path, key: str, title: str, xlabel: str) -> None:
+def _pyplot():
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    models = list(summary["models"])
-    factors = list(FACTORS)
-    fig, ax = plt.subplots(figsize=(7.5, 0.55 * len(factors) * max(1, len(models)) + 1.4), facecolor=SURFACE)
-    _style(ax, plt)
-    ax.axvline(0, color=INK_2, linewidth=1)
-    step = 0.32
+    return plt
+
+
+def plot_effects(summary: dict, path: Path, task: str, key: str, xlabel: str) -> None:
+    """Mean paired change per factor with its 95% bootstrap CI, one series per model."""
+    plt = _pyplot()
+    models, factors = list(summary["models"]), list(FACTORS)
+    y = np.arange(len(factors))
+    step = 0.8 / len(models)
+    fig, ax = plt.subplots(figsize=(8, 4.5), layout="constrained")
     for j, m in enumerate(models):
-        eff = summary["models"][m]["effects"]
-        for i, f in enumerate(factors):
-            y = len(factors) - 1 - i + (len(models) - 1) / 2 * step - j * step
-            e = eff[f][key.split(".")[0]]
-            mean, ci = e[key.split(".")[1]], e["ci95"]
-            if mean is None:
-                continue
-            if ci:
-                ax.plot(ci, [y, y], color=MODEL_COLORS[j], linewidth=2, solid_capstyle="round")
-            ax.plot([mean], [y], "o", markersize=8, color=MODEL_COLORS[j], markeredgecolor=SURFACE,
-                    markeredgewidth=2, label=m if i == 0 else None, zorder=3)
-            p = e["wilcoxon_p_holm"]
-            if p is not None and p < 0.05:
-                ax.annotate("*", (ci[1] if ci else mean, y), xytext=(4, -3), textcoords="offset points",
-                            color=INK, fontsize=11)
-    ax.set_yticks(range(len(factors)))
-    ax.set_yticklabels([summary["factor_labels"][f] for f in reversed(factors)], color=INK, fontsize=10)
-    lim = max(0.05, *(abs(v) for m in models for f in factors
-                      for v in (summary["models"][m]["effects"][f][key.split(".")[0]]["ci95"] or [0])))
-    ax.set_xlim(-lim * 1.25, lim * 1.25)
-    ax.set_xlabel(xlabel, color=INK_2, fontsize=9)
-    ax.set_title(title, loc="left", color=INK, fontsize=12, pad=22)
-    ax.text(0, 1.02, "Mean paired change vs. contrast version, 95% bootstrap CI; * Holm-corrected Wilcoxon p < .05",
-            transform=ax.transAxes, color=INK_2, fontsize=8)
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.1), ncol=len(models), frameon=False, fontsize=9,
-              labelcolor=INK)
-    fig.tight_layout()
-    fig.savefig(path, dpi=200, facecolor=SURFACE)
+        means, lo, hi = [], [], []
+        for f in factors:
+            e = summary["models"][m]["effects"][f][task]
+            mean, ci = e[key], e["ci95"]
+            means.append(np.nan if mean is None else mean)
+            # max(0, ...): rounding can put the mean a hair outside a near-zero-width CI
+            lo.append(max(0.0, mean - ci[0]) if mean is not None and ci else 0)
+            hi.append(max(0.0, ci[1] - mean) if mean is not None and ci else 0)
+        ax.errorbar(means, y + (j - (len(models) - 1) / 2) * step, xerr=[lo, hi], fmt="o", capsize=3, label=m)
+    ax.axvline(0, color="black", linewidth=0.8)
+    ax.set_yticks(y, labels=[summary["factor_labels"][f] for f in factors])
+    ax.invert_yaxis()
+    ax.set_xlabel(xlabel)
+    fig.legend(loc="outside lower center", ncols=len(models))
+    fig.savefig(path, dpi=150)
     plt.close(fig)
 
 
 def plot_flips(summary: dict, path: Path) -> None:
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    models = list(summary["models"])
-    factors = list(FACTORS)
-    fig, ax = plt.subplots(figsize=(7.5, 0.55 * len(factors) * max(1, len(models)) + 1.4), facecolor=SURFACE)
-    _style(ax, plt)
-    h = 0.8 / max(1, len(models))
+    """Share of passages whose grant/refuse decision flips, per factor and model."""
+    plt = _pyplot()
+    models, factors = list(summary["models"]), list(FACTORS)
+    y = np.arange(len(factors))
+    step = 0.8 / len(models)
+    fig, ax = plt.subplots(figsize=(8, 4.5), layout="constrained")
     for j, m in enumerate(models):
-        eff = summary["models"][m]["effects"]
-        for i, f in enumerate(factors):
-            d = eff[f]["decision"]
-            if d["flip_rate"] is None:
-                continue
-            y = len(factors) - 1 - i + 0.4 - h * (j + 0.5)
-            ax.barh(y, d["flip_rate"] * 100, height=h - 0.06, color=MODEL_COLORS[j], label=m if i == 0 else None)
-            ax.annotate(f"{d['flip_rate'] * 100:.0f}%  ({d['grant_to_refuse']} to refuse, {d['refuse_to_grant']} to grant)",
-                        (d["flip_rate"] * 100, y), xytext=(4, 0), textcoords="offset points", va="center",
-                        color=INK_2, fontsize=8)
-    ax.set_yticks(range(len(factors)))
-    ax.set_yticklabels([summary["factor_labels"][f] for f in reversed(factors)], color=INK, fontsize=10)
-    top = max([eff["decision"]["flip_rate"] or 0 for m in models for eff in summary["models"][m]["effects"].values()] + [0.05])
-    ax.set_xlim(0, top * 100 * 1.8)
-    ax.set_xlabel("Passages whose grant/refuse decision flips (%)", color=INK_2, fontsize=9)
-    ax.set_title("Decision flips by factor", loc="left", color=INK, fontsize=12, pad=10)
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.1), ncol=len(models), frameon=False, fontsize=9,
-              labelcolor=INK)
-    fig.tight_layout()
-    fig.savefig(path, dpi=200, facecolor=SURFACE)
+        rates = [(summary["models"][m]["effects"][f]["decision"]["flip_rate"] or 0) * 100 for f in factors]
+        ax.barh(y + (j - (len(models) - 1) / 2) * step, rates, height=step, label=m)
+    ax.set_yticks(y, labels=[summary["factor_labels"][f] for f in factors])
+    ax.invert_yaxis()
+    ax.set_xlim(left=0)
+    ax.set_xlabel("Passages whose decision flips (%)")
+    fig.legend(loc="outside lower center", ncols=len(models))
+    fig.savefig(path, dpi=150)
     plt.close(fig)
-
-
-# --- report ------------------------------------------------------------------------------
-
-
-def _f(x, fmt="{:+.2f}"):
-    return "–" if x is None else fmt.format(x)
-
-
-def _ci(ci, fmt="{:+.2f}"):
-    return "–" if not ci else f"[{fmt.format(ci[0])}, {fmt.format(ci[1])}]"
-
-
-def _p(p):
-    return "–" if p is None else ("<.001" if p < 0.001 else f"{p:.3f}")
-
-
-def write_report(summary: dict, path: Path) -> None:
-    L = ["# Evaluation results", ""]
-    L += [f"Benchmark sha `{summary['benchmark_sha256_12']}`, {summary['n_prompts']} prompts from "
-          f"{summary['n_passages']} passages. Scores are recomputed from first-token logprobs. "
-          "Changes are variant minus contrast version of the same passage (the contrast for *two spellings* "
-          "is the consistently spelled Somali name). CIs are 95% bootstrap over passages; p-values are "
-          f"Wilcoxon signed-rank, Holm-corrected across the {len(FACTORS)} factors.", ""]
-    for m, s in summary["models"].items():
-        L += [f"## {m}", ""]
-        cov = s["coverage"]
-        L += [f"Scored {cov['credibility']['scored']}/{cov['credibility']['prompts']} credibility and "
-              f"{cov['decision']['scored']}/{cov['decision']['prompts']} decision prompts "
-              f"(mean probability on valid answer tokens {_f(cov['credibility']['mean_answer_mass'], '{:.3f}')} / "
-              f"{_f(cov['decision']['mean_answer_mass'], '{:.3f}')}; content-filtered "
-              f"{cov['credibility']['content_filtered']} / {cov['decision']['content_filtered']}).", ""]
-        L += ["### Credibility (1–7)", "",
-              "| Factor | n | Mean change | 95% CI | Rated lower | Cohen's dz | p (Holm) |",
-              "|---|---:|---:|---|---:|---:|---:|"]
-        for f, label in summary["factor_labels"].items():
-            c = s["effects"][f]["credibility"]
-            L.append(f"| {label} | {c['n']} | {_f(c['mean_change'])} | {_ci(c['ci95'])} | "
-                     f"{_f(c['share_lower'], '{:.0%}')} | {_f(c['cohens_dz'])} | {_p(c['wilcoxon_p_holm'])} |")
-        L += ["", "### Grant / refuse", "",
-              "| Factor | n | Change in P(grant) | 95% CI | p (Holm) | Flip rate | To refuse | To grant | Direction p |",
-              "|---|---:|---:|---|---:|---:|---:|---:|---:|"]
-        for f, label in summary["factor_labels"].items():
-            d = s["effects"][f]["decision"]
-            L.append(f"| {label} | {d['n']} | {_f(d['mean_change_p_grant'], '{:+.3f}')} | "
-                     f"{_ci(d['ci95'], '{:+.3f}')} | {_p(d['wilcoxon_p_holm'])} | {_f(d['flip_rate'], '{:.0%}')} | "
-                     f"{d['grant_to_refuse']} | {d['refuse_to_grant']} | {_p(d['flip_direction_p'])} |")
-        L += ["", "### What it says vs. what it does", "",
-              "Stated: the model is asked directly (three paraphrases, no testimony) whether the factor should "
-              "make testimony LESS or MORE credible or leave it the SAME. Does: the direction of a significant "
-              "credibility effect above, else SAME.", "",
-              "| Factor | P(less) | P(same) | P(more) | Says | Does | Consistent |", "|---|---:|---:|---:|---|---|---|"]
-        for f, label in summary["factor_labels"].items():
-            st, sd = s["stated"][f], s["say_do"][f]
-            pr = st["probs"] or {}
-            L.append(f"| {label} | {_f(pr.get('less'), '{:.2f}')} | {_f(pr.get('same'), '{:.2f}')} | "
-                     f"{_f(pr.get('more'), '{:.2f}')} | {sd['says'] or '–'} | {sd['does']} | "
-                     f"{'–' if sd['consistent'] is None else ('yes' if sd['consistent'] else '**no**')} |")
-        v = s["baseline_validity"]
-        L += ["", "### Baseline vs. the tribunal's real outcome", "",
-              f"- Credibility: mean {_f(v['credibility']['mean_granted'], '{:.2f}')} for granted vs "
-              f"{_f(v['credibility']['mean_refused'], '{:.2f}')} for refused claims; AUC "
-              f"{_f(v['credibility']['auc_vs_outcome'], '{:.2f}')}.",
-              f"- P(grant): mean {_f(v['p_grant']['mean_granted'], '{:.2f}')} vs "
-              f"{_f(v['p_grant']['mean_refused'], '{:.2f}')}; AUC {_f(v['p_grant']['auc_vs_outcome'], '{:.2f}')}.",
-              f"- Decision: grants {_f(v['decision']['grant_rate'], '{:.0%}')} of baseline passages (tribunal: "
-              f"{_f(v['decision']['real_grant_rate'], '{:.0%}')}); agrees with the tribunal on "
-              f"{_f(v['decision']['accuracy_vs_outcome'], '{:.0%}')}.", ""]
-        L += ["### In its own words", ""]
-        for f, label in summary["factor_labels"].items():
-            text = (s["stated"][f]["explanation"] or "–").strip().replace("\n", " ")
-            L.append(f"- **{label}:** {text}")
-        L.append("")
-    if summary.get("agreement"):
-        L += ["## Agreement between models", ""]
-        for pair, a in summary["agreement"].items():
-            L.append(f"- {pair}: Spearman ρ of baseline credibility {_f(a['credibility_spearman'], '{:.2f}')}, "
-                     f"of baseline P(grant) {_f(a['p_grant_spearman'], '{:.2f}')} (n = {a['n']}).")
-        L.append("")
-    L += ["![Credibility effects](credibility_effects.png)", "", "![Grant probability effects](grant_effects.png)",
-          "", "![Decision flips](decision_flips.png)", ""]
-    path.write_text("\n".join(L), encoding="utf-8")
 
 
 def main(argv=None) -> int:
@@ -410,7 +291,7 @@ def main(argv=None) -> int:
     bench_sha = file_sha(bench / "benchmark.jsonl")
     items = build_items(rows, principle_cues(cfg))
     min_mass = cfg["evaluate"]["min_answer_mass"]
-    n_boot, seed = cfg["analysis"]["bootstrap_samples"], cfg["analysis"]["seed"]
+    n_boot, seed = cfg["analyze"]["bootstrap_samples"], cfg["analyze"]["seed"]
 
     models = [m for m in cfg["evaluate"]["models"] if not args.model or m["name"] in args.model]
     summary = {"benchmark_sha256_12": bench_sha, "n_prompts": len(rows),
@@ -476,12 +357,11 @@ def main(argv=None) -> int:
                 w.writerow([m, r["id"], r["passage_id"], r["variant"], r["outcome"], s["credibility"],
                             s["credibility_mass"], s["p_grant"], s["decision_mass"]])
 
-    plot_effects(summary, an / "credibility_effects.png", "credibility.mean_change",
-                 "Change in credibility rating by factor", "Change in expected credibility rating (1–7 scale)")
-    plot_effects(summary, an / "grant_effects.png", "decision.mean_change_p_grant",
-                 "Change in grant probability by factor", "Change in P(grant)")
+    plot_effects(summary, an / "credibility_effects.png", "credibility", "mean_change",
+                 "Change in credibility rating (1–7), variant minus contrast")
+    plot_effects(summary, an / "grant_effects.png", "decision", "mean_change_p_grant",
+                 "Change in P(grant), variant minus contrast")
     plot_flips(summary, an / "decision_flips.png")
-    write_report(summary, an / "report.md")
     print(f"wrote analysis for {', '.join(summary['models'])} to {an}")
     return 0
 

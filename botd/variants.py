@@ -57,7 +57,8 @@ def validate_extract(obj: dict, cfg: dict) -> list[str]:
         p.append('"claimant_gender" must be male, female or unknown')
     t = obj.get("testimony") or ""
     n = len(t.split())
-    lo, hi = cfg["passage"]["min_words"], cfg["passage"]["max_words"]
+    pc = cfg["generate"]["passage"]
+    lo, hi = pc["min_words"], pc["max_words"]
     if not (lo * 0.9 <= n <= hi * 1.1):
         p.append(f"testimony has {n} words; it must have {lo}-{hi}")
     if not t.startswith("My name is {FULL_NAME}."):
@@ -143,7 +144,7 @@ def _check_religious(orig: str, rep: str) -> list[str]:
 
 def validate_annotate(obj: dict, template: str, cfg: dict, pair: dict) -> list[str]:
     p = []
-    key, vcfg = "religious", cfg["variants"]["religious"]
+    key, vcfg = "religious", cfg["generate"]["variants"]["religious"]
     terms = vcfg["lexicon"]
     edits = obj.get(key)
     if not isinstance(edits, list):
@@ -167,7 +168,7 @@ def validate_annotate(obj: dict, template: str, cfg: dict, pair: dict) -> list[s
 
 
 def pick_names(case_id: str, gender: str, cfg: dict) -> dict:
-    pool = cfg["names"]["female" if gender == "female" else "male"]
+    pool = cfg["generate"]["names"]["female" if gender == "female" else "male"]
     return pool[int(case_id) % len(pool)]
 
 
@@ -177,7 +178,7 @@ def _fill(text: str, given: str, family: str) -> str:
 
 def _compose(header_name: tuple[str, str], body: str, cfg: dict, interp: str | None = None) -> str:
     """`interp`: the interpretation variant whose interpreter sentence goes under the header."""
-    parts = [_fill(cfg["passage"]["header"], *header_name)]
+    parts = [_fill(cfg["generate"]["passage"]["header"], *header_name)]
     if interp:
         parts.append(_interp_sentence(cfg, interp))
     parts.append(body)
@@ -186,16 +187,16 @@ def _compose(header_name: tuple[str, str], body: str, cfg: dict, interp: str | N
 
 def interp_languages(cfg: dict) -> dict[str, str]:
     """Interpreter language of each interpretation variant."""
-    v = cfg["variants"]["interpretation"]
-    return {"interpretation": v["language"], "interpretation_other": v["other_language"]}
+    v = cfg["generate"]["variants"]["interpretation"]
+    return {"interpretation": v["language"], "interpretation_other": v["control_language"]}
 
 
 def _interp_sentence(cfg: dict, variant: str) -> str:
-    return cfg["variants"]["interpretation"]["sentence"].format(language=interp_languages(cfg)[variant])
+    return cfg["generate"]["variants"]["interpretation"]["sentence"].format(language=interp_languages(cfg)[variant])
 
 
 def build_versions(template: str, edits: dict, pair: dict, cfg: dict) -> dict[str, str]:
-    b, v = pair["baseline"], pair["variant"]
+    b, v = pair["baseline"], pair["somali"]
     base = (b["given"], b["family"])
     som = (v["given"], v["family"])
     return {
@@ -205,7 +206,7 @@ def build_versions(template: str, edits: dict, pair: dict, cfg: dict) -> dict[st
         "interpretation": _compose(base, _fill(template, *base), cfg, interp="interpretation"),
         "interpretation_other": _compose(base, _fill(template, *base), cfg, interp="interpretation_other"),
         # Header keeps the standard spelling; every mention in the account uses the alternative.
-        "name_spelling": _compose(som, _fill(template, v["given_alt"], v["family"]), cfg),
+        "name_spelling": _compose(som, _fill(template, v["alt_spelling"], v["family"]), cfg),
     }
 
 
@@ -219,7 +220,7 @@ def _undo_edits(text: str, edits: list[dict]) -> str | None:
 
 def diff_check(versions: dict[str, str], template: str, edits: dict, pair: dict, cfg: dict) -> dict[str, str]:
     """Undo each variant's single intended change; the result must equal its contrast version."""
-    b, v = pair["baseline"], pair["variant"]
+    b, v = pair["baseline"], pair["somali"]
     results = {}
 
     def undo_name(t):
@@ -231,7 +232,7 @@ def diff_check(versions: dict[str, str], template: str, edits: dict, pair: dict,
         "religious": lambda t: _undo_edits(t, edits["religious"]),
         "interpretation": lambda t: t.replace(_interp_sentence(cfg, "interpretation") + "\n\n", "", 1),
         "interpretation_other": lambda t: t.replace(_interp_sentence(cfg, "interpretation_other") + "\n\n", "", 1),
-        "name_spelling": lambda t: re.sub(rf"\b{re.escape(v['given_alt'])}\b", v["given"], t),
+        "name_spelling": lambda t: re.sub(rf"\b{re.escape(v['alt_spelling'])}\b", v["given"], t),
     }
     for variant, _factor, contrast in VERSIONS[1:]:
         text = versions[variant]
@@ -240,7 +241,7 @@ def diff_check(versions: dict[str, str], template: str, edits: dict, pair: dict,
             continue
         restored = undo[variant](text)
         results[variant] = "ok" if restored == versions[contrast] else "changes beyond the target factor"
-    if versions["name_spelling"].count(v["given_alt"]) < 1 or v["given"] not in versions["name_spelling"]:
+    if versions["name_spelling"].count(v["alt_spelling"]) < 1 or v["given"] not in versions["name_spelling"]:
         results["name_spelling"] = "does not contain both spellings"
     return results
 

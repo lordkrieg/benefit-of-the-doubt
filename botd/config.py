@@ -8,16 +8,18 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Operational Azure settings: they don't change model outputs (or any stage/response version),
-# so they live here rather than in config.toml. A key under [azure] in config.toml overrides one.
+# Operational defaults: they don't change model outputs (or any stage/response version), so
+# they live here rather than in config.toml. A key under the same section in config.toml
+# overrides one.
+
+# Azure connection shared by the generator and the evaluated models ([azure]). The endpoint
+# and key come from .env; each model's own settings are in [generate.model] / [[evaluate.models]].
 AZURE_DEFAULTS = {
     "max_output_tokens": 6000,
     "request_timeout_s": 180,
     # Rate-limit handling
     "min_interval_s": 4.0,             # client-side pacing between request starts
-    "max_retries": 8,                  # per request, for 429 / 5xx / timeouts
-    "backoff_base_s": 5.0,
-    "backoff_max_s": 300.0,            # a Retry-After longer than this ends the run (quota exhausted)
+    "max_retries": 8,                  # per request, for 429 / 5xx / timeouts (by the OpenAI client)
     "max_consecutive_failures": 5,     # stop the run (resume later) after this many failed cases in a row
     "max_attempts_per_case": 3,        # per stage, counted across runs
     "max_repair_rounds": 2,            # follow-ups asking the model to fix output that failed validation
@@ -33,7 +35,7 @@ EVAL_MODEL_DEFAULTS = {
     "concurrency": 8,
     "min_interval_s": 0.15,            # <= 400 request starts per minute
 }
-ANALYSIS_DEFAULTS = {
+ANALYZE_DEFAULTS = {
     "bootstrap_samples": 10000,
     "seed": 13,
 }
@@ -44,20 +46,27 @@ def load_config(path: str | Path = ROOT / "config.toml") -> dict:
     with open(path, "rb") as f:
         cfg = tomllib.load(f)
 
-    for key in ("raw_dir", "work_dir", "output_dir", "results_dir"):
+    for key in ("raw_dir", "work_dir", "benchmark_dir", "results_dir"):
         p = Path(cfg["paths"][key])
         cfg["paths"][key] = p if p.is_absolute() else ROOT / p
 
     az = cfg["azure"] = AZURE_DEFAULTS | cfg.get("azure", {})
-    az["deployment"] = os.environ.get("AZURE_DEPLOYMENT") or az.get("deployment", "")
     az["endpoint"] = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
     az["api_key"] = os.environ.get("AZURE_API_KEY", "")
 
     ev = cfg["evaluate"] = EVALUATE_DEFAULTS | cfg.get("evaluate", {})
     ev["models"] = [EVAL_MODEL_DEFAULTS | m for m in ev.get("models", [])]
-    cfg["analysis"] = ANALYSIS_DEFAULTS | cfg.get("analysis", {})
+    cfg["analyze"] = ANALYZE_DEFAULTS | cfg.get("analyze", {})
+
+    gm = cfg["generate"]["model"]
+    gm["deployment"] = os.environ.get("AZURE_DEPLOYMENT") or gm.get("deployment", "")
     cfg["hf_token"] = os.environ.get("HUGGINGFACE") or os.environ.get("HF_TOKEN")
     return cfg
+
+
+def generator_az(cfg: dict) -> dict:
+    """Azure client settings for the generating model: shared connection plus its own settings."""
+    return cfg["azure"] | cfg["generate"]["model"]
 
 
 def public_config(cfg: dict) -> dict:

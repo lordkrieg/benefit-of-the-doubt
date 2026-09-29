@@ -4,8 +4,9 @@ import csv
 import random
 import re
 import tarfile
-import urllib.request
 from pathlib import Path
+
+from huggingface_hub import hf_hub_download
 
 FILES = {
     "texts": "cases_anonymized_txt_raw.tar.gz",
@@ -24,29 +25,12 @@ DIVISIONS = [
 ]
 
 
-def download(repo: str, revision: str, raw_dir: Path, token: str | None, log=print) -> dict[str, Path]:
-    """Fetch the AsyLex files we need at a pinned dataset revision, resuming partial downloads."""
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    paths = {}
-    for key, remote in FILES.items():
-        dest = raw_dir / Path(remote).name
-        paths[key] = dest
-        url = f"https://huggingface.co/datasets/{repo}/resolve/{revision}/{remote}"
-        headers = {"Authorization": f"Bearer {token}"} if token else {}
-        req = urllib.request.Request(url, method="HEAD", headers=headers)
-        with urllib.request.urlopen(req, timeout=60) as r:
-            total = int(r.headers.get("Content-Length") or 0)
-        have = dest.stat().st_size if dest.exists() else 0
-        if total and have == total:
-            continue
-        log(f"downloading {remote} ({have / 1e6:.0f}/{total / 1e6:.0f} MB present)")
-        if have:
-            headers["Range"] = f"bytes={have}-"
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=120) as r, open(dest, "ab" if have else "wb") as f:
-            while chunk := r.read(1 << 20):
-                f.write(chunk)
-    return paths
+def download(repo: str, revision: str, raw_dir: Path, token: str | None) -> dict[str, Path]:
+    """Fetch the AsyLex files we need at a pinned dataset revision (skipped when already present)."""
+    return {
+        key: Path(hf_hub_download(repo, remote, repo_type="dataset", revision=revision, token=token, local_dir=raw_dir))
+        for key, remote in FILES.items()
+    }
 
 
 def load_labels(paths: dict[str, Path], sources: list[str]) -> dict[str, tuple[int, str]]:
@@ -124,9 +108,9 @@ def build_candidates(paths: dict[str, Path], cfg: dict, log=print) -> list[dict]
     Order matters: the pipeline accepts candidates in this order until each label's
     target is met, so the final sample is reproducible from the seed.
     """
-    ds, sample = cfg["dataset"], cfg["sample"]
-    from_text = ds["label_mode"] == "decision_text"
-    labels = load_labels(paths, ds["label_sources"])
+    src, sample = cfg["generate"]["asylex"], cfg["generate"]["sample"]
+    from_text = src["label_mode"] == "decision_text"
+    labels = load_labels(paths, src["label_sources"])
     cover_years = load_cover_years(paths["case_cover"])
     eligible: dict[int, list[dict]] = {0: [], 1: []}
     seen: dict[str, int] = {}
@@ -140,7 +124,7 @@ def build_candidates(paths: dict[str, Path], cfg: dict, log=print) -> list[dict]
             if not m or (not from_text and m.group(2) not in labels):
                 continue
             text = decode(tar.extractfile(member).read())
-            if len(text) < ds["min_chars"] or division_of(text) not in ds["divisions"]:
+            if len(text) < src["min_decision_chars"] or division_of(text) not in src["divisions"]:
                 continue
             asylex_label = labels.get(m.group(2))
             if from_text:
@@ -178,12 +162,12 @@ def build_candidates(paths: dict[str, Path], cfg: dict, log=print) -> list[dict]
         eligible[outcome] = [c for c in eligible[outcome] if keep(c)]
     log(f"eligible decisions: {len(eligible[1])} granted, {len(eligible[0])} refused")
 
-    rng = random.Random(ds["seed"])
+    rng = random.Random(sample["seed"])
     pools = {}
     for outcome, target in ((1, sample["n_granted"]), (0, sample["n_refused"])):
         cases = sorted(eligible[outcome], key=lambda c: int(c["case_id"]))
         rng.shuffle(cases)
-        pools[outcome] = cases[: target * sample["candidate_pool_multiplier"]]
+        pools[outcome] = cases[: target * sample["candidates_per_target"]]
         if len(cases) < target:
             log(f"WARNING: only {len(cases)} eligible for outcome={outcome}, target {target}")
     # Interleave labels so a partial run stays roughly balanced.
