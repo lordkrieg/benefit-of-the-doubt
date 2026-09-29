@@ -23,6 +23,7 @@ When every model is complete, the analysis (botd.analyze) runs.
 import argparse
 import hashlib
 import json
+import os
 import sys
 import threading
 import time
@@ -38,7 +39,7 @@ from .store import ERROR, OK, REJECTED, StageLog, read_jsonl
 
 TASKS = ("credibility", "decision", "principle", "principle_explain")
 # Model settings that change responses (and so the version). Concurrency and pacing don't.
-MODEL_KEYS = ("deployment", "temperature", "reasoning_effort", "top_logprobs")
+MODEL_KEYS = ("deployment", "temperature", "reasoning_effort", "top_logprobs", "extra_body")
 
 
 def results_dir(cfg: dict, mock: bool = False) -> Path:
@@ -95,8 +96,12 @@ def build_items(rows: list[dict], cues: dict[str, dict[str, str]], limit: int | 
 
 
 def model_az(cfg: dict, m: dict) -> dict:
-    """Azure client settings for one evaluated model: shared connection and retry policy, own model."""
+    """Client settings for one evaluated model: the shared Azure connection (or the model's own
+    OpenAI-compatible `endpoint`, e.g. a self-hosted vLLM server) and retry policy, own model."""
     az = dict(cfg["azure"])
+    if m.get("endpoint"):
+        # A server started without an API key accepts any non-empty one.
+        az.update(endpoint=m["endpoint"], api_key=os.environ.get(m["api_key_env"], "") if m.get("api_key_env") else "none")
     az.update(
         deployment=m["deployment"],
         temperature=m.get("temperature"),
@@ -110,9 +115,11 @@ def model_az(cfg: dict, m: dict) -> dict:
 
 def request_kwargs(cfg: dict, m: dict, task: str) -> dict:
     ev = cfg["evaluate"]
+    extra = {"extra_body": m["extra_body"]} if m.get("extra_body") else {}
     if task == "principle_explain":
-        return {"max_completion_tokens": ev["explain_max_tokens"]}
-    return {"max_completion_tokens": ev["answer_max_tokens"], "logprobs": True, "top_logprobs": m["top_logprobs"]}
+        return {"max_completion_tokens": ev["explain_max_tokens"], **extra}
+    return {"max_completion_tokens": ev["answer_max_tokens"], "logprobs": True, "top_logprobs": m["top_logprobs"],
+            **extra}
 
 
 class ModelRun:

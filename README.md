@@ -35,7 +35,7 @@ All six versions of a passage (baseline, Somali name, Islamic vocabulary, Somali
 
 ## Running the evaluation
 
-The evaluated models are set in `[[evaluate.models]]` in [config.toml](config.toml): **DeepSeek-V4-Pro** (primary) and **gpt-6-luna** (comparison), both on the same Azure endpoint as the generator.
+The evaluated models are set in `[[evaluate.models]]` in [config.toml](config.toml): **DeepSeek-V4-Pro** and **gpt-6-luna** on the same Azure endpoint as the generator, and **Qwen3.5-4B** (`qwen--qwen3.5-4b`, deployment `qwen--qwen35-4b`) on Foundry managed compute (a GlobalManagedCompute deployment on an A100, reached through the same endpoint and key); **Gemma 4 E2B-it** is set up the same way but commented out. Managed compute is billed per hour while deployed, so delete those deployments after the run. A model can also set its own `endpoint` (any OpenAI-compatible server that returns logprobs, e.g. vLLM), with `api_key_env` naming the `.env` variable that holds its key.
 
 ```sh
 uv run python -m botd.evaluate                     # run / resume every model, then analyse
@@ -52,7 +52,7 @@ uv run python -m botd.analyze                      # re-run the analysis only
 - **decision**: GRANT or REFUSE for each prompt; the score is P(grant), renormalised over the two answers.
 - **principle**: asked directly, with no testimony, whether each factor should make testimony LESS or MORE credible or leave it the SAME (three paraphrases per factor), plus a free-text explanation.
 
-**Model settings.** DeepSeek-V4-Pro runs at temperature 0 with the top 20 logprobs (all seven digits are always present). gpt-6-luna is a reasoning model: Azure only returns logprobs for it with `reasoning_effort = "none"`, fixes its temperature at 1 and caps `top_logprobs` at 5. So it is evaluated with reasoning off, and digits outside its top 5 count as zero. The share of probability on valid answer tokens is recorded for every response; answers below `min_answer_mass` (0.5) are excluded.
+**Model settings.** DeepSeek-V4-Pro runs at temperature 0 with the top 20 logprobs (all seven digits are always present). gpt-6-luna is a reasoning model: Azure only returns logprobs for it with `reasoning_effort = "none"`, fixes its temperature at 1 and caps `top_logprobs` at 5. So it is evaluated with reasoning off, and digits outside its top 5 count as zero. Qwen runs at temperature 0 with the top 20 logprobs. It thinks by default, so it too runs with `reasoning_effort = "none"`: that makes the answer the first token (Azure rejects the chat-template switch `chat_template_kwargs`, and Qwen3.5 ignores `/no_think`). The share of probability on valid answer tokens is recorded for every response; answers below `min_answer_mass` (0.5) are excluded.
 
 **Parallel runs.** Azure rate limits are per deployment (currently 500 requests and 500k tokens per minute each), so the models run at the same time, each with its own pool of `concurrency` in-flight requests paced by `min_interval_s`. A full run (about 1,220 requests per model) takes a few minutes. Retries, backoff and the clean stop on quota exhaustion are the same as the generator's. The Azure Batch API was not used: it doesn't cover DeepSeek and returns results asynchronously, within up to 24 hours.
 
@@ -64,7 +64,7 @@ uv run python -m botd.analyze                      # re-run the analysis only
 - decision flip rates, with an exact binomial test on the direction of the flips;
 - what each model *says* (stated principles) against what it *does* (the direction of a significant effect);
 - how baseline scores relate to the tribunal's real outcome (AUC, agreement);
-- agreement between the two models.
+- agreement between models (pairwise).
 
 Outputs: `summary.json` (every statistic, plus the models' free-text explanations), `effects.csv` (one row per model × factor), `scores.csv` (one row per model × prompt), and figures `credibility_effects.png`, `grant_effects.png` and `decision_flips.png`.
 

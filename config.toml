@@ -10,10 +10,29 @@ results_dir = "data/results"        # evaluation responses, analysis and figures
 
 # =======================================================================================
 # Evaluation (botd.evaluate, botd.analyze). Evaluated models use the same Azure endpoint
-# and key as the generator.
+# and key as the generator, unless they set their own `endpoint` (any OpenAI-compatible server
+# that returns logprobs, e.g. vLLM; `api_key_env` names the .env variable with its key, if any).
 [evaluate]
 seed = 26                           # sent with each request, for more repeatable sampling
 
+# Models between 0.6 and 6B parameters, on Foundry managed compute (GlobalManagedCompute
+# deployments, reached through the same endpoint). They think by default; reasoning_effort =
+# "none" turns that off so the answer is the first token (Azure rejects chat_template_kwargs).
+[[evaluate.models]]
+name = "qwen--qwen3.5-4b"
+deployment = "qwen--qwen35-4b"      # Foundry drops the dot from the model name
+reasoning_effort = "none"
+temperature = 0.0
+top_logprobs = 20
+
+[[evaluate.models]]
+name = "google--gemma-4-e2b-it"
+deployment = "google--gemma-4-e2b-it"  # check the name Foundry gives the deployment
+reasoning_effort = "none"
+temperature = 0.0
+top_logprobs = 20
+
+# Frontier models
 [[evaluate.models]]
 name = "deepseek-v4-pro"            # label used in results
 deployment = "DeepSeek-V4-Pro"
