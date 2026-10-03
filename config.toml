@@ -26,6 +26,13 @@ temperature = 0.0
 top_logprobs = 20
 
 [[evaluate.models]]
+name = "qwen--qwen3.5-2b"
+deployment = "qwen--qwen35-2b"
+reasoning_effort = "none"
+temperature = 0.0
+top_logprobs = 20
+
+[[evaluate.models]]
 name = "google--gemma-4-e2b-it"
 deployment = "google--gemma-4-e2b-it"  # check the name Foundry gives the deployment
 reasoning_effort = "none"

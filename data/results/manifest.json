@@ -1,7 +1,7 @@
 {
-  "created": "2026-09-29T23:17:29",
+  "created": "2026-10-01T00:09:42",
   "code": {
-    "commit": "58e9d998758fd12c5a201088ba95f54114f3f76f",
+    "commit": "9c7a7381aa59691f7d025baf8c914a40e3f3a916",
     "dirty": true
   },
   "benchmark": {
@@ -206,6 +206,94 @@
         "prompt_tokens": 579369,
         "total_tokens": 584983
       }
+    },
+    "qwen--qwen3.5-0.8b": {
+      "version": "7576ef07e3e1",
+      "settings": {
+        "deployment": "qwen--qwen35-08b",
+        "temperature": 0.0,
+        "reasoning_effort": "none",
+        "top_logprobs": 20,
+        "extra_body": null
+      },
+      "seed": 26,
+      "model_versions": [
+        "qwen--qwen3.5-0.8b"
+      ],
+      "system_fingerprints": [
+        "vllm-0.27.1-9705c8b6"
+      ],
+      "counts": {
+        "credibility": {
+          "done": 600,
+          "rejected": 0,
+          "failed": 0,
+          "pending": 0
+        },
+        "decision": {
+          "done": 600,
+          "rejected": 0,
+          "failed": 0,
+          "pending": 0
+        },
+        "principle": {
+          "done": 15,
+          "rejected": 0,
+          "failed": 0,
+          "pending": 0
+        },
+        "principle_explain": {
+          "done": 5,
+          "rejected": 0,
+          "failed": 0,
+          "pending": 0
+        }
+      },
+      "usage": {
+        "completion_tokens": 3590,
+        "prompt_tokens": 576459,
+        "total_tokens": 580049
+      }
+    },
+    "qwen--qwen3.5-2b": {
+      "version": "9406619a185d",
+      "settings": {
+        "deployment": "qwen--qwen35-2b",
+        "temperature": 0.0,
+        "reasoning_effort": "none",
+        "top_logprobs": 20,
+        "extra_body": null
+      },
+      "seed": 26,
+      "model_versions": [],
+      "system_fingerprints": [],
+      "counts": {
+        "credibility": {
+          "done": 0,
+          "rejected": 0,
+          "failed": 0,
+          "pending": 600
+        },
+        "decision": {
+          "done": 0,
+          "rejected": 0,
+          "failed": 0,
+          "pending": 600
+        },
+        "principle": {
+          "done": 0,
+          "rejected": 0,
+          "failed": 0,
+          "pending": 15
+        },
+        "principle_explain": {
+          "done": 0,
+          "rejected": 0,
+          "failed": 0,
+          "pending": 5
+        }
+      },
+      "usage": {}
     }
   },
   "evaluate_settings": {
@@ -219,6 +307,15 @@
         "min_interval_s": 0.15,
         "name": "qwen--qwen3.5-4b",
         "deployment": "qwen--qwen35-4b",
+        "reasoning_effort": "none",
+        "temperature": 0.0,
+        "top_logprobs": 20
+      },
+      {
+        "concurrency": 8,
+        "min_interval_s": 0.15,
+        "name": "qwen--qwen3.5-2b",
+        "deployment": "qwen--qwen35-2b",
         "reasoning_effort": "none",
         "temperature": 0.0,
         "top_logprobs": 20
