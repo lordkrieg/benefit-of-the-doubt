@@ -47,3 +47,23 @@ Three further small models were evaluated and dropped because they did not give 
 - Add a small model that answers in the required format (e.g. Phi-4-mini-instruct) in place of the dropped Gemma and small Qwen models.
 - Test whether the Somali-interpreter effect holds with rephrased prompts and other language pairs (e.g. Tigrinya, Dari, Ukrainian).
 - Check the 20 hand-review passages (`data/benchmark/manual_review.csv`) before publishing.
+
+
+## DELETE
+
+## Prompt
+
+The following models did not give conclusive answer:
+- google--gemma-4-e2b-it
+- qwen--qwen3.5-0.8b
+- qwen--qwen3.5-2b
+
+---
+
+We are trying to reduce code, so remove all code relating to the analyze, status, smoke, and mock functionalities.
+
+---
+
+## One methodological risk worth flagging in your README
+
+Asylum testimony describes torture, sexual violence and killings. Azure's default content filters may refuse or quietly soften some rewrites. If that happens more often for certain case types, your "screening" step becomes a hidden selection bias: the most severe persecution accounts drop out, and they may not drop out evenly between granted and refused cases. Log every filter block and refusal, report the drop rate by outcome class, and consider applying for adjusted content-filter settings for research use. Pointing this out yourself will read as rigor rather than weakness.
